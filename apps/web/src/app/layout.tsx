@@ -38,8 +38,22 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex min-h-full font-sans">
-        {/* Sidebar */}
-        <aside className="sticky top-0 flex h-screen w-60 flex-col border-r border-[#ded8cc] bg-[#fffdf9] p-6">
+        {/* ==================== Mobile Bottom Nav ==================== */}
+        <nav className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-[#ded8cc] bg-[#fffdf9] md:hidden">
+          {NAV.slice(0, 5).map(({ href, label, text }) => (
+            <Link
+              key={href}
+              href={href}
+              className="flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] text-[#77786f]"
+            >
+              <span className="text-base">{label}</span>
+              <span>{text}</span>
+            </Link>
+          ))}
+        </nav>
+
+        {/* ==================== Desktop Sidebar ==================== */}
+        <aside className="sticky top-0 hidden h-screen w-60 flex-col border-r border-[#ded8cc] bg-[#fffdf9] p-6 md:flex">
           <Link href="/" className="mb-6 flex items-center gap-3 px-2">
             <div className="grid h-10 w-10 place-items-center rounded-2xl bg-[#20221f] font-serif text-lg text-[#fffdf9]">
               谋
@@ -73,7 +87,7 @@ export default function RootLayout({
         </aside>
 
         {/* Main */}
-        <main className="flex-1">{children}</main>
+        <main className="flex-1 pb-16 md:pb-0">{children}</main>
       </body>
     </html>
   );
