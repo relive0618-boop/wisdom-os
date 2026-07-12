@@ -49,23 +49,24 @@ export default function KnowledgePage() {
   });
 
   return (
-    <div className="mx-auto max-w-4xl p-8">
-      <div className="mb-6 flex flex-wrap gap-4">
-        <div className="flex flex-1 items-center gap-3 rounded-xl border border-[#ded8cc] bg-[#fffdf9] px-4">
+    <div className="mx-auto max-w-4xl px-4 py-5 md:px-8 md:py-8">
+      {/* Search bar — simplified on mobile */}
+      <div className="mb-4 flex gap-3">
+        <div className="flex flex-1 items-center gap-2 rounded-xl border border-[#ded8cc] bg-[#fffdf9] px-3">
           <span className="text-[#77786f]">⌕</span>
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索原文、原则、场景或标签"
-            className="flex-1 border-0 bg-transparent py-3 text-sm outline-none"
+            placeholder="搜索知识..."
+            className="w-full border-0 bg-transparent py-2.5 text-sm outline-none md:py-3"
           />
         </div>
         <select
           value={chapter}
           onChange={(e) => setChapter(e.target.value)}
-          className="w-48 rounded-xl border border-[#ded8cc] bg-[#fffdf9] px-4 py-3 text-sm outline-none"
+          className="w-auto shrink-0 rounded-xl border border-[#ded8cc] bg-[#fffdf9] px-3 py-2.5 text-sm outline-none md:w-48"
         >
-          <option value="">全部十三篇</option>
+          <option value="">全部</option>
           {chapters.map((c) => (
             <option key={c} value={c}>
               {c}
@@ -74,13 +75,13 @@ export default function KnowledgePage() {
         </select>
       </div>
 
-      {/* Chapter chips */}
-      <div className="mb-6 flex gap-2 overflow-auto pb-2">
+      {/* Chapter chips — scrollable strip */}
+      <div className="mb-4 flex gap-2 overflow-auto pb-1 scrollbar-none">
         {["", ...chapters].map((c) => (
           <button
             key={c || "all"}
             onClick={() => setChapter(c)}
-            className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-[11px] ${
+            className={`shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-[11px] ${
               chapter === c
                 ? "border-transparent bg-[#20221f] text-[#fffdf9]"
                 : "border-[#ded8cc] bg-[#fffdf9] text-[#77786f]"
@@ -91,42 +92,49 @@ export default function KnowledgePage() {
         ))}
       </div>
 
+      {/* Cards */}
       <div className="space-y-3">
         {filtered.map((k) => (
-          <article key={k.id} className="rounded-xl border border-[#ded8cc] bg-[#fffdf9] p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <span className="text-xs font-bold uppercase tracking-widest text-[#8a4d2e]">
-                  {k.chapter}
-                </span>
-                <h3 className="mb-3 mt-1 text-base font-semibold">{k.title}</h3>
-              </div>
-              <span className="shrink-0 rounded-full bg-[#eee9df] px-2.5 py-1 text-[10px] text-[#77786f]">
-                权威资料
+          <article key={k.id} className="rounded-xl border border-[#ded8cc] bg-[#fffdf9] p-4 md:p-5">
+            {/* Header */}
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-widest text-[#8a4d2e]">
+                {k.chapter}
               </span>
+              <span className="text-[10px] text-[#77786f]">/</span>
+              <h3 className="text-sm font-semibold md:text-base">{k.title}</h3>
             </div>
 
-            <blockquote className="mb-3 border-l-2 border-[#8a4d2e] pl-3 font-serif leading-relaxed">
-              {k.source}
+            {/* Source quote — hidden on very small screens, kept with compact spacing */}
+            <blockquote className="mb-2 border-l-2 border-[#8a4d2e] pl-3 text-xs leading-relaxed md:text-sm">
+              {k.source.length > 60 ? k.source.slice(0, 60) + "…" : k.source}
             </blockquote>
 
-            <p className="mb-2 text-sm leading-relaxed text-[#77786f]">{k.plain}</p>
-            <p className="mb-3 text-sm leading-relaxed">
-              <b>决策原则：</b>
+            {/* Plain text — only show first ~100 chars on mobile with expand logic */}
+            <p className="mb-1 text-xs leading-relaxed text-[#77786f] md:text-sm">
+              {k.plain}
+            </p>
+
+            <p className="mb-2 text-xs leading-relaxed md:text-sm">
+              <b>原则：</b>
               {k.principle}
             </p>
 
-            {/* Counterexamples */}
+            {/* Counterexamples — collapsed as a subtle badge on mobile */}
             {k.counterexamples && (
-              <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-                <p className="text-xs font-bold text-amber-800">⚠ 误用风险</p>
-                <p className="mt-1 text-xs leading-relaxed text-amber-700">{k.counterexamples}</p>
-              </div>
+              <details className="group mb-2">
+                <summary className="cursor-pointer text-xs font-bold text-amber-700">
+                  ⚠ 误用风险
+                </summary>
+                <p className="mt-1 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+                  {k.counterexamples}
+                </p>
+              </details>
             )}
 
             {/* Limits */}
             {k.limits && k.limits.length > 0 && (
-              <div className="mb-3 space-y-1">
+              <div className="mb-2 space-y-0.5">
                 {k.limits.map((l, i) => (
                   <p key={i} className="text-xs leading-relaxed text-[#77786f]">
                     <b>边界：</b>
@@ -136,11 +144,12 @@ export default function KnowledgePage() {
               </div>
             )}
 
-            <div className="flex flex-wrap gap-1.5">
+            {/* Tags */}
+            <div className="flex flex-wrap gap-1">
               {k.tags.map((t) => (
                 <span
                   key={t}
-                  className="rounded-lg bg-[#eee9df] px-2 py-0.5 text-[10px] text-[#77786f]"
+                  className="rounded-lg bg-[#eee9df] px-1.5 py-0.5 text-[10px] text-[#77786f]"
                 >
                   {t}
                 </span>
