@@ -25,9 +25,9 @@ export default function KnowledgePage() {
   useEffect(() => {
     fetch("/api/knowledge")
       .then((r) => r.json())
-      .then((d) => {
+      .then((d: any) => {
         setItems(d.knowledge);
-        setChapters([...new Set(d.knowledge.map((k: KnowledgeItem) => k.chapter))]);
+        setChapters([...new Set(d.knowledge.map((k: KnowledgeItem) => k.chapter))] as string[]);
       });
   }, []);
 
