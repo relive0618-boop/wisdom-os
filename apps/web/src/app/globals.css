@@ -10,6 +10,7 @@
   --accent: #8a4d2e;
   --accent-2: #b46d43;
   --green: #486451;
+  color-scheme: light;
 }
 
 [data-theme="dark"] {
@@ -22,10 +23,31 @@
   --accent: #d18a5c;
   --accent-2: #e3a373;
   --green: #89ad91;
+  color-scheme: dark;
 }
 
 body {
   background: var(--bg);
   color: var(--text);
   font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+/* Keep the existing visual language while making its common utility colors theme-aware. */
+[data-theme="dark"] .bg-\[\#fffdf9\] { background-color: var(--panel) !important; }
+[data-theme="dark"] .bg-\[\#f4f1ea\] { background-color: var(--bg) !important; }
+[data-theme="dark"] .bg-\[\#eee9df\] { background-color: var(--panel-2) !important; }
+[data-theme="dark"] .border-\[\#ded8cc\] { border-color: var(--line) !important; }
+[data-theme="dark"] .text-\[\#20221f\] { color: var(--text) !important; }
+[data-theme="dark"] .text-\[\#77786f\] { color: var(--muted) !important; }
+[data-theme="dark"] .text-\[\#8a4d2e\] { color: var(--accent) !important; }
+[data-theme="dark"] .bg-\[\#8a4d2e\] { background-color: var(--accent) !important; }
+[data-theme="dark"] .hover\:bg-\[\#f4f1ea\]:hover { background-color: var(--panel-2) !important; }
+
+input, textarea, select {
+  color: var(--text);
+}
+
+::placeholder {
+  color: var(--muted);
+  opacity: 0.8;
 }

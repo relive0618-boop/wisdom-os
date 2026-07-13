@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { saveReport } from "@/lib/reportStore";
 
 const STEPS = [
   { key: "situation", label: "描述处境", icon: "1" },
@@ -104,8 +105,9 @@ export default function DecisionPage() {
         body: JSON.stringify(form),
       });
       const data = await res.json();
-      sessionStorage.setItem("lastReport", JSON.stringify(data));
-      router.push("/report");
+      if (!res.ok) throw new Error(data?.error?.message || data?.error || "分析失败");
+      const saved = saveReport(data);
+      router.push(`/report?reportId=${encodeURIComponent(saved.reportId)}`);
     } catch {
       alert("分析失败，请重试。");
     } finally {
@@ -114,7 +116,7 @@ export default function DecisionPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl p-8">
+    <div className="mx-auto max-w-4xl p-4 pb-24 sm:p-8 sm:pb-8">
       {/* Quick templates */}
       <div className="mb-8">
         <span className="text-xs font-bold uppercase tracking-widest text-[#8a4d2e]">
@@ -348,11 +350,11 @@ export default function DecisionPage() {
             <div className="flex items-center gap-3">
               {/* Fill indicator */}
               <div className="hidden items-center gap-2 sm:flex">
-                {["title", "question"].map((k) => (
+                {(["title", "question"] as const).map((k) => (
                   <div
                     key={k}
                     className={`h-1.5 w-1.5 rounded-full ${
-                      (form as any)[k] ? "bg-[#486451]" : "bg-[#ded8cc]"
+                      form[k] ? "bg-[#486451]" : "bg-[#ded8cc]"
                     }`}
                   />
                 ))}
@@ -385,7 +387,7 @@ export default function DecisionPage() {
 
       {/* Privacy note */}
       <p className="mt-4 text-center text-[11px] text-[#77786f]">
-        你的内容只在本机分析与保存，不会被发送到外部服务器。
+        未配置远程 AI 时使用本地引擎；配置后内容会由服务器发送至你指定的 OpenAI-compatible 服务。
       </p>
     </div>
   );
@@ -425,7 +427,7 @@ function DecisionField({
       </div>
       <Tag
         value={value}
-        onChange={(e: any) => onChange(e.target.value)}
+        onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => onChange(e.target.value)}
         placeholder={placeholder}
         rows={rows}
         maxLength={maxLength}

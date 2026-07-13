@@ -6,7 +6,12 @@
     "summary": "团队没有直接降价，而是重新组合服务、延长保障并聚焦高价值客户。",
     "result": "毛利率下降有限，客户流失被控制。",
     "lessons": ["改变比较标准", "避免在对方优势战场硬拼", "先保护现金流"],
-    "tags": ["价格战", "竞争", "谋攻", "虚实"]
+    "tags": ["价格战", "竞争", "谋攻", "虚实"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-002",
@@ -15,7 +20,12 @@
     "summary": "负责人把争议从谁优先改为共同收入目标，并设置阶段性共享资源。",
     "result": "冲突降级，双方共同承担验证指标。",
     "lessons": ["重构利益结构", "建立共同目标", "避免正面对抗"],
-    "tags": ["职场", "管理", "谋攻", "兵势"]
+    "tags": ["职场", "管理", "谋攻", "兵势"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-003",
@@ -24,7 +34,12 @@
     "summary": "先用六个月建立现金储备、试运营和客户验证，再决定是否全职投入。",
     "result": "降低了错误时点离职的风险。",
     "lessons": ["先为不可胜", "小规模验证", "设置退出条件"],
-    "tags": ["职业", "创业", "军形", "风险"]
+    "tags": ["职业", "创业", "军形", "风险"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-004",
@@ -33,7 +48,12 @@
     "summary": "团队没有复制巨头全部功能，而是服务被忽略的细分工作流。",
     "result": "获得首批高黏性用户。",
     "lessons": ["避实击虚", "选择细分战场", "先建立基本盘"],
-    "tags": ["创业", "产品", "虚实", "兵势"]
+    "tags": ["创业", "产品", "虚实", "兵势"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-005",
@@ -42,7 +62,12 @@
     "summary": "销售将讨论转向交付风险、维护成本与上线速度。",
     "result": "价格压力下降，合同范围更清楚。",
     "lessons": ["主动定义议题", "用总成本替代单价比较", "建立证据"],
-    "tags": ["谈判", "销售", "虚实", "始计"]
+    "tags": ["谈判", "销售", "虚实", "始计"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-006",
@@ -51,7 +76,12 @@
     "summary": "创始人为拿到投资夸大用户数据与产品完成度，团队长期超负荷工作，核心成员陆续离职。",
     "result": "融资虽然拿到，但团队士气崩溃，产品延期六个月才上线。",
     "lessons": ["先为不可胜：建立真实基础", "信息质量影响内部信任", "短期收益与长期代价需平衡"],
-    "tags": ["创业", "管理", "军形", "火攻"]
+    "tags": ["创业", "管理", "军形", "火攻"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-007",
@@ -60,7 +90,12 @@
     "summary": "产品经理复制了大厂的工作流、文档模板和KPI体系，但低估了从零获客的成本与销售流程的差异。",
     "result": "资源消耗过快，团队在获客成本超出预期时没有余力调整。",
     "lessons": ["知天知地：大厂环境不等于创业环境", "资源消耗计算比方法论更重要", "先验证市场需求，再套用管理工具"],
-    "tags": ["创业", "产品", "地形", "作战"]
+    "tags": ["创业", "产品", "地形", "作战"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-008",
@@ -69,7 +104,12 @@
     "summary": "一个新兴团队选择做干净的通讯体验，不加广告、不搞流量分发，专注于加密与速度。",
     "result": "用户信任度提升，在注重隐私的用户群体中形成口碑。",
     "lessons": ["以正合：基础体验是第一竞争力", "避实击虚：寻找被过度服务的用户群体", "致人而不致于人：不跟随行业功能竞赛"],
-    "tags": ["产品", "竞争", "虚实", "兵势"]
+    "tags": ["产品", "竞争", "虚实", "兵势"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-009",
@@ -78,7 +118,12 @@
     "summary": "创始人没有接受对方的最终报价，而是透露多个竞争方兴趣、同时展示独立发展的现金流数据。",
     "result": "对方重新评估后上调报价30%。",
     "lessons": ["知彼知己：让对方看到你的独立价值", "致人而不致于人：避免只有一个选择", "多算胜：提前准备备选方案"],
-    "tags": ["谈判", "并购", "始计", "用间"]
+    "tags": ["谈判", "并购", "始计", "用间"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-010",
@@ -87,7 +132,12 @@
     "summary": "CEO主动向全员公开财务状况，将剩余资金分为三份：核心产品、客户交付、裁员补偿。团队自愿接受降薪换取额外两个月窗口。",
     "result": "核心产品在五个月内获得付费客户，公司免于清算。",
     "lessons": ["令民与上同意：透明建立信任", "投之亡地然后存：危机中团队可承受的比想象更多", "非危不战：迫不得已时才打出最后底牌"],
-    "tags": ["创业", "管理", "九地", "始计"]
+    "tags": ["创业", "管理", "九地", "始计"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-011",
@@ -96,7 +146,12 @@
     "summary": "企业没有立刻全面切换供应商，而是在东南亚试点三条替代方案，同时维持原供应商的20%订单作为备用。",
     "result": "六个月内完成供应链过渡，没有停产一天。",
     "lessons": ["杂于利害：同时评估现方案与替代方案的风险", "因粮于敌：在过渡阶段利用现成渠道维持运营", "先为不可胜：保留备用方案"],
-    "tags": ["管理", "运营", "九变", "作战"]
+    "tags": ["管理", "运营", "九变", "作战"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-012",
@@ -105,7 +160,12 @@
     "summary": "新经理没有靠职权压人，而是与每个成员进行一对一沟通，理解各自的诉求，再建立新的协作方式。",
     "result": "团队协作恢复正常。",
     "lessons": ["令之以文，齐之以武：先建立信任再提要求", "视卒如婴儿：日常关怀建立领导力", "求之于势：设计制度而不是靠个人推动"],
-    "tags": ["管理", "职场", "行军", "兵势"]
+    "tags": ["管理", "职场", "行军", "兵势"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-013",
@@ -114,7 +174,12 @@
     "summary": "没有急着做大功能，而是每周修复用户反馈的痛点、优化文档和教程。",
     "result": "一年后用户增长到两万，自然增长占90%。",
     "lessons": ["兵非益多：与其做大不如做精", "以迂为直：通过服务现有用户曲线增长", "胜兵先胜而后求战：先让基础体验过关再考虑规模"],
-    "tags": ["产品", "创业", "行军", "军争"]
+    "tags": ["产品", "创业", "行军", "军争"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-014",
@@ -123,7 +188,12 @@
     "summary": "销售没有当场降价，而是请求一天时间做方案，第二天带着更细致的方案和付款条件去谈判。",
     "result": "客户接受了报价，付款条件甚至优于预期。",
     "lessons": ["避其锐气：不在对方压力最大的时刻做决定", "致人而不致于人：主动控制谈判节奏", "杂于利害：一天的缓冲期让方案更完整"],
-    "tags": ["谈判", "销售", "军争", "虚实"]
+    "tags": ["谈判", "销售", "军争", "虚实"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-015",
@@ -132,7 +202,12 @@
     "summary": "创始人与合伙人进行深入复盘，发现并非产品不好而是渠道错了，重新调整了触达用户的方式。",
     "result": "调整后三个月用户增长了五倍。",
     "lessons": ["败之道非天之道：先检查内部问题而非归咎市场", "三军可夺气，将军可夺心：领导者的心态直接影响团队", "先知者不可取于鬼神：用事实替代情绪判断"],
-    "tags": ["创业", "心理", "地形", "用间"]
+    "tags": ["创业", "心理", "地形", "用间"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-016",
@@ -141,7 +216,12 @@
     "summary": "产品经理没有急着改版，而是先做了用户访谈，发现留存下降的原因是推送频率过高而非产品功能问题。",
     "result": "减少推送频率后留存回升，节省了三个月开发资源。",
     "lessons": ["先知者不可取于鬼神：先调查再下结论", "胜可知而不可为：不要强行制造用户行为", "非利不动：不是所有问题都需要大动干戈"],
-    "tags": ["产品", "管理", "用间", "火攻"]
+    "tags": ["产品", "管理", "用间", "火攻"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-017",
@@ -150,7 +230,12 @@
     "summary": "投资者清点仓位，发现持有的大多是优质公司，但仓位过重。制定分批减仓计划，将仓位降至睡得着觉的水平。",
     "result": "市场继续下跌，但因仓位已降至七成，心理压力大幅减少，反而能在低位补仓。",
     "lessons": ["先为不可胜：控制下行风险才能从容应对", "杂于利害：同时看到下跌的风险与机会", "多算胜：提前制定不同行情下的应对方案"],
-    "tags": ["投资", "个人", "军形", "九变"]
+    "tags": ["投资", "个人", "军形", "九变"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-018",
@@ -159,7 +244,12 @@
     "summary": "创始人经过分析认为团队优势在垂直行业的SaaS服务，没有盲目转型AI，而是用AI优化现有产品体验。",
     "result": "一年后AI泡沫消退，他们的现金流产品依然稳健增长。",
     "lessons": ["知天知地：理解产业周期与自身定位", "兵无常势：不因外部变化而失去方向", "避实击虚：在巨头疯狂投入的领域选择差异化"],
-    "tags": ["创业", "产品", "地形", "虚实"]
+    "tags": ["创业", "产品", "地形", "虚实"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-019",
@@ -168,7 +258,12 @@
     "summary": "CEO在裁员后第一时间与每位留下的人沟通，坦诚财务状况、说明留下来的价值、并承诺后续不会再裁。",
     "result": "团队在三个月内恢复了工作效率，核心成员无人离职。",
     "lessons": ["视卒如婴儿：裁员后的关怀比裁员本身更重要", "令素行以教其民：平时积累的信任是危机时的缓冲", "胜敌而益强：危机后如果处理得当，团队会更凝聚"],
-    "tags": ["管理", "职场", "地形", "行军"]
+    "tags": ["管理", "职场", "地形", "行军"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-020",
@@ -177,7 +272,12 @@
     "summary": "自由职业者没有直接降价，而是提出缩小项目范围但保持单价，并加入未来扩展的期权条款。",
     "result": "客户接受，项目顺利完成后又追加了二期。",
     "lessons": ["上兵伐谋：不要只在价格上让步，重新定义交易结构", "形人而我无形：让客户先透露预算范围", "不战而屈人之兵：用未来合作潜力替代当下折扣"],
-    "tags": ["谈判", "个人", "谋攻", "虚实"]
+    "tags": ["谈判", "个人", "谋攻", "虚实"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-021",
@@ -186,7 +286,12 @@
     "summary": "创始人没有强求二代接班，而是引入职业经理人负责日常运营，让二代从董事会角度学习战略决策。",
     "result": "职业经理人提升了管理效率，二代逐渐产生兴趣，三年后主动参与。",
     "lessons": ["以迂为直：间接路径有时比直接要求更有效", "将通于九变之利：不同世代需要不同的传承方式", "道者令民与上同意：接班人需要自己的认同感"],
-    "tags": ["管理", "职场", "军争", "始计"]
+    "tags": ["管理", "职场", "军争", "始计"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-022",
@@ -195,7 +300,12 @@
     "summary": "团队复盘发现是先建团队再做市场的顺序錯了——应该先验证产品市场匹配，再配置本地团队。",
     "result": "调整为先小规模测试再扩团队，第二年营收增长了三倍。",
     "lessons": ["败之道非天之道：先检查内部顺序与逻辑", "胜兵先胜而后求战：扩张前先验证单一变量", "兵贵胜不贵久：快速验证比大规模投入更高效"],
-    "tags": ["创业", "管理", "地形", "作战"]
+    "tags": ["创业", "管理", "地形", "作战"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-023",
@@ -204,7 +314,12 @@
     "summary": "团队没有增加更多会议，而是建立异步沟通规范、设置重叠时区窗口、简化决策流程。",
     "result": "三个月后效率恢复并超过办公水平，员工满意度提升。",
     "lessons": ["善用兵者譬如率然：建立高效协同机制", "求之于势：用制度和工具替代监督", "以正合以奇胜：远距办公的流程是基本盤，文化創新是奇招"],
-    "tags": ["管理", "职场", "九地", "兵势"]
+    "tags": ["管理", "职场", "九地", "兵势"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-024",
@@ -213,7 +328,12 @@
     "summary": "负责人没有慌乱，坦承技术问题并直接切换到准备好的备选演示方案，同时用幽默化解尴尬。",
     "result": "媒体报导反而聚焦在团队的坦诚与应变能力。",
     "lessons": ["君命有所不受：预设方案失效时需要临场判断", "恃吾有以待：真正专业的团队永远有B计划", "投之亡地然后存：危机中的从容表现反而赢得信任"],
-    "tags": ["职场", "管理", "九变", "九地"]
+    "tags": ["职场", "管理", "九变", "九地"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-025",
@@ -222,7 +342,12 @@
     "summary": "团队最初的定价基于成本加成法，完全沒考慮客戶的支付意願和競品分布。調整為基於價值的定價後才開始有穩定增長。",
     "result": "降价40%后转化率提升到2%，总收入反而增长了。",
     "lessons": ["知彼知己：定价需要理解客户心理而非成本", "校之以计而索其情：定价决策需要完整分析框架", "因粮于敌：参考市场上已有的定价模式"],
-    "tags": ["产品", "创业", "始计", "作战"]
+    "tags": ["产品", "创业", "始计", "作战"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-026",
@@ -231,7 +356,12 @@
     "summary": "CEO没有各打五十大板，而是单独与每人沟通后发现根源是KPI冲突。调整了考核方式，让两人的目标对齐。",
     "result": "预算争论转化为资源协调讨论。",
     "lessons": ["求之于势：制度设计决定行为", "致人而不致于人：主动解决结构性问题而不是被動調停", "善用兵者譬如率然：让组织各部分可以互相支援"],
-    "tags": ["管理", "职场", "兵势", "虚实"]
+    "tags": ["管理", "职场", "兵势", "虚实"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-027",
@@ -240,7 +370,12 @@
     "summary": "求职者没有接受或拒绝，而是列出自己能带来的具体价值（过往业绩、行业资源），請求重新評估。",
     "result": "HR重新评估后将薪资提高了15%。",
     "lessons": ["知彼知己：清楚自己的市场价值", "上兵伐谋：改变对方对你的定位而不是直接要价", "形人而我无形：让对方先出价再反饋"],
-    "tags": ["谈判", "职场", "始计", "谋攻"]
+    "tags": ["谈判", "职场", "始计", "谋攻"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-028",
@@ -249,7 +384,12 @@
     "summary": "团队没有陷入情绪对抗，而是用公司章程中预设的股份回购条款处理，保留其部分权益但收回投票权。",
     "result": "三个月内完成平稳过渡，没有影响产品发布进度。",
     "lessons": ["先为不可胜：公司章程需要预设人走茶凉的情况", "非利不动：不因情绪做出不利公司的决策", "亡国不可以复存：创始人退出机制属于不可逆决策"],
-    "tags": ["创业", "管理", "军形", "火攻"]
+    "tags": ["创业", "管理", "军形", "火攻"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-029",
@@ -258,7 +398,12 @@
     "summary": "建立固定的日常流程（固定早餐、膠囊衣櫃、固定工作節奏），把決策精力留給真正重要的事。",
     "result": "每天多出約1.5小時的有效工作時間。",
     "lessons": ["胜兵先胜而后求战：用流程降低日常消耗", "朝气锐昼气惰暮气归：把最重要的決策放在精力最好的時段", "谨养而勿劳：管理注意力和精力也是資源管理"],
-    "tags": ["个人", "效率", "军形", "行军"]
+    "tags": ["个人", "效率", "军形", "行军"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   },
   {
     "id": "case-030",
@@ -267,6 +412,11 @@
     "summary": "没有立刻停掉代理业务，而是用代理利润培养自有品牌的研发与渠道，两条线并行直到自有品牌可以獨立。",
     "result": "兩年後自有品牌佔比60%，利潤率從8%提升到25%。",
     "lessons": ["因粮于敌：用現有業務養新業務", "以迂为直：先確保生存再談轉型", "胜敌而益强：每一步都為下一步積累資本"],
-    "tags": ["创业", "产品", "作战", "军争"]
+    "tags": ["创业", "产品", "作战", "军争"],
+    "case_type": "composite",
+    "source_title": null,
+    "source_url": null,
+    "source_date": null,
+    "review_status": "reviewed"
   }
 ]
