@@ -75,7 +75,7 @@ AI_MODEL=gpt-4o-mini
 
 ## Vercel 部署
 
-1. 将项目 Root Directory 设置为 `wisdom-os`（或从该目录部署）。
+1. 在 Vercel 中将 Root Directory 留空，使用 repository 根目录。repository 根目录已包含 `package.json`、`pnpm-workspace.yaml`、`vercel.json`、`apps` 与 `packages`。本机执行命令时才需要先进入 `wisdom-os` 文件夹。
 2. 使用默认的 `pnpm install` 与 `pnpm run build`。
 3. 在 Preview 与 Production 环境分别设置 `AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL`；不设置也可以零成本运行本地模式。
 4. 部署后访问 `/api/health`，确认 `remote.configured` 是否符合预期。
