@@ -1,18 +1,30 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { listCycles, removeAllCycles, type PdcaCycle } from "@/lib/pdca";
 import { listReports, migrateLastReport, migrateLegacyCycles, removeAllReports, type StoredReport } from "@/lib/reportStore";
 
+export function loadHistoryData() {
+  migrateLastReport();
+  migrateLegacyCycles();
+  return { reports: listReports(), cycles: listCycles() };
+}
+
 export default function HistoryPage() {
-  const [reports, setReports] = useState<StoredReport[]>(() => {
-    if (typeof window === "undefined") return [];
-    migrateLastReport();
-    migrateLegacyCycles();
-    return listReports();
-  });
-  const [cycles, setCycles] = useState<PdcaCycle[]>(() => (typeof window === "undefined" ? [] : listCycles()));
+  const [reports, setReports] = useState<StoredReport[]>([]);
+  const [cycles, setCycles] = useState<PdcaCycle[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const data = loadHistoryData();
+      setReports(data.reports);
+      setCycles(data.cycles);
+      setLoading(false);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   function refresh() {
     setReports(listReports());
@@ -21,6 +33,10 @@ export default function HistoryPage() {
 
   const cyclesFor = (reportId: string) => cycles.filter((cycle) => cycle.reportId === reportId);
   const done = (items: PdcaCycle["items"]) => items.filter((item) => item.status === "done").length;
+
+  if (loading) {
+    return <div className="mx-auto max-w-4xl p-4 pb-24 text-sm text-[var(--muted)] sm:p-8 sm:pb-8">正在读取历史记录…</div>;
+  }
 
   return (
     <div className="mx-auto max-w-4xl p-4 pb-24 sm:p-8 sm:pb-8">

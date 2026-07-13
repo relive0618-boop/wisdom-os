@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import knowledge from "./knowledge.json" with { type: "json" };
 import cases from "./cases.json" with { type: "json" };
 import { createEngine } from "./engine.js";
@@ -306,6 +307,16 @@ test("citation provenance 至少需要兩條有效引用", () => {
 
 test("PdcaCycleSchema 拒絕損壞資料", () => {
   assert.equal(PdcaCycleSchema.safeParse({ cycleId: "only-id" }).success, false);
+});
+
+test("History 首次 render 不讀寫 storage", () => {
+  const source = readFileSync(new URL("../app/history/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /useState<StoredReport\[\]>\(\[\]\)/);
+  assert.match(source, /useState<PdcaCycle\[\]>\(\[\]\)/);
+  assert.match(source, /useState\(true\)/);
+  assert.match(source, /useEffect\(\(\) =>/);
+  assert.doesNotMatch(source, /useState<StoredReport\[\]>\(\(\) =>/);
+  assert.doesNotMatch(source, /useState<PdcaCycle\[\]>\(\(\) =>/);
 });
 
 test("/api/analyze 無效 JSON", async () => {
