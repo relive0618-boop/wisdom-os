@@ -105,6 +105,7 @@ export const AnalyzeInputSchema = z.object({
   constraints: z.string().trim().max(2000).optional().default(""),
   risks: z.string().trim().max(2000).optional().default(""),
   deadline: z.union([z.literal(""), z.string().date()]).optional().default(""),
+  analysisMode: z.enum(["auto", "local", "remote"]).optional().default("auto"),
 });
 
 export type AnalyzeInput = z.infer<typeof AnalyzeInputSchema>;
@@ -118,19 +119,50 @@ export const AnalyzeResponseSchema = z.object({
   report: ReportSchema,
   remoteError: z.string().nullable().optional(),
   retrievedAt: z.string(),
+  analysisMode: z.enum(["auto", "local", "remote"]).default("auto"),
+  provider: z.string().default("local"),
+  model: z.string().nullable().default(null),
+  qualityScore: z.number().min(0).max(100).default(100),
+  qualityWarnings: z.array(z.string()).default([]),
+  qualityPassed: z.boolean().default(true),
+  fallbackReason: z.enum([
+    "REMOTE_NOT_CONFIGURED",
+    "REMOTE_TIMEOUT",
+    "REMOTE_HTTP_ERROR",
+    "REMOTE_INVALID_JSON",
+    "REMOTE_SCHEMA_INVALID",
+    "REMOTE_CITATION_INVALID",
+    "REMOTE_QUALITY_FAILED",
+    "USER_SELECTED_LOCAL",
+  ]).nullable().default(null),
+  remoteAttempted: z.boolean().default(false),
+  remoteSucceeded: z.boolean().default(false),
 });
 
 export type AnalyzeResponse = z.infer<typeof AnalyzeResponseSchema>;
+
+export const ReportQualitySchema = z.object({
+  qualityScore: z.number().min(0).max(100),
+  qualityWarnings: z.array(z.string()),
+  qualityPassed: z.boolean(),
+});
+
+export type ReportQuality = z.infer<typeof ReportQualitySchema>;
 
 export const HealthResponseSchema = z.object({
   ok: z.boolean(),
   app: z.string(),
   remote: z.object({
     configured: z.boolean(),
-    baseUrl: z.string().nullable(),
+    apiKeyConfigured: z.boolean(),
+    provider: z.string().nullable(),
+    safeBaseUrl: z.string().nullable(),
     model: z.string().nullable(),
+    timeoutMs: z.number().int().positive(),
+    maxRetries: z.number().int().min(0).max(1),
   }),
   mode: z.enum(["local", "remote"]),
+  defaultMode: z.enum(["auto", "local", "remote"]),
 });
 
 export const PdcaItemSchema = z.object({

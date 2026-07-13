@@ -76,6 +76,7 @@ export default function DecisionPage() {
     resources: "",
     constraints: "",
     risks: "",
+    analysisMode: "auto",
   });
 
   function update(key: string, value: string) {
@@ -220,6 +221,21 @@ export default function DecisionPage() {
                     <p className="mt-1 text-[11px] text-[#77786f]">
                       {CATEGORIES.find((c) => c.value === form.category)?.note}
                     </p>
+                  </label>
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-bold text-[#555]">分析模式</span>
+                    <select
+                      value={form.analysisMode}
+                      onChange={(e) => update("analysisMode", e.target.value)}
+                      className="w-full rounded-xl border border-[#ded8cc] bg-[#f4f1ea] px-4 py-3 text-sm outline-none focus:border-[#8a4d2e] focus:ring-2 focus:ring-[#8a4d2e]/10"
+                    >
+                      <option value="auto">自动：远程优先，失败回退本地</option>
+                      <option value="local">本地：不调用远程 AI</option>
+                      <option value="remote">远程：失败时安全回退本地</option>
+                    </select>
+                    <p className="mt-1 text-[11px] text-[#77786f]">远程模式不会保存或暴露 API Key。</p>
                   </label>
                 </div>
               </div>

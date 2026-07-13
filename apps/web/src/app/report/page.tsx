@@ -198,6 +198,15 @@ function ReportContent() {
         </button>
       </div>
 
+      <section className="flex flex-wrap gap-2 rounded-xl border border-[#ded8cc] bg-[#fffdf9] p-4 text-xs text-[#77786f]">
+        <span className="rounded-full bg-[#eee9df] px-2.5 py-1">{r.mode === "remote" ? "Remote" : "Local"}</span>
+        <span>Provider：{data.provider || "local"}</span>
+        <span>Model：{data.model || "—"}</span>
+        <span>Quality：{data.qualityScore ?? "—"}</span>
+        <span>引用验证：{data.qualityPassed ? "通过" : "未通过"}</span>
+        {data.fallbackReason && <span>Fallback：{data.fallbackReason}</span>}
+      </section>
+
       {/* Core Conflict & Situation */}
       <section className="rounded-xl border border-[#ded8cc] bg-[#fffdf9] p-6">
         <h3 className="mb-3 text-sm font-semibold">核心矛盾</h3>

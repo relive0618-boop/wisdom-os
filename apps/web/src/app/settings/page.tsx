@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 export default function SettingsPage() {
   const [theme, setTheme] = useState("light");
   const [stats, setStats] = useState({ cycles: 0, reviews: 0, itemsDone: 0 });
-  const [remote, setRemote] = useState<{ configured: boolean; model: string | null }>({ configured: false, model: null });
+  const [remote, setRemote] = useState({ configured: false, apiKeyConfigured: false, provider: null as string | null, safeBaseUrl: null as string | null, model: null as string | null, timeoutMs: 25000, maxRetries: 1, defaultMode: "auto" });
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -30,8 +30,8 @@ export default function SettingsPage() {
     }, 0);
     fetch("/api/health")
       .then((res) => res.json())
-      .then((data: { remote?: { configured: boolean; model: string | null } }) => setRemote(data.remote || { configured: false, model: null }))
-      .catch(() => setRemote({ configured: false, model: null }));
+      .then((data: { remote?: Partial<typeof remote>; defaultMode?: string }) => setRemote((previous) => ({ ...previous, ...(data.remote || {}), defaultMode: data.defaultMode || previous.defaultMode })))
+      .catch(() => undefined);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -79,17 +79,26 @@ export default function SettingsPage() {
                 </p>
               </div>
               <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-medium ${remote.configured ? "bg-green-100 text-green-700" : "bg-[#eee9df] text-[#77786f]"}`}>
-                {remote.configured ? `已配置${remote.model ? ` · ${remote.model}` : ""}` : "未配置"}
+                {remote.configured ? "已配置" : "未配置"}
               </span>
             </div>
           </div>
 
           <div className="mt-4 flex flex-wrap gap-1.5">
-            {["AI_BASE_URL", "AI_API_KEY", "AI_MODEL"].map((v) => (
+            {["AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_TIMEOUT_MS", "AI_MAX_RETRIES"].map((v) => (
               <code key={v} className="rounded-lg bg-[#eee9df] px-2 py-1 text-[10px] text-[#77786f]">
                 {v}
               </code>
             ))}
+          </div>
+          <div className="mt-4 space-y-2 border-t border-[#ded8cc] pt-4 text-xs text-[#77786f]">
+            <div>Provider：{remote.provider || "未配置"}</div>
+            <div>Base URL：{remote.safeBaseUrl || "未配置"}</div>
+            <div>Model：{remote.model || "未配置"}</div>
+            <div>Timeout：{remote.timeoutMs / 1000} 秒</div>
+            <div>Max retries：{remote.maxRetries}</div>
+            <div>API Key：{remote.apiKeyConfigured ? "已設定" : "未設定"}</div>
+            <div>默认分析模式：{remote.defaultMode}</div>
           </div>
         </div>
 

@@ -4,6 +4,7 @@ import casesData from "@/lib/cases.json" with { type: "json" };
 import { createEngine } from "@/lib/engine.js";
 import { AnalyzeInputSchema, AnalyzeResponseSchema, ReportSchema } from "@wisdom/shared";
 import { requestRemoteReport } from "@/lib/ai";
+import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 
 const { retrieve, buildLocalReport, buildPrompt } = createEngine(knowledgeData, casesData);
 
@@ -12,6 +13,9 @@ function errorResponse(status: number, code: string, message: string) {
 }
 
 export async function POST(request: Request) {
+  const rate = checkRateLimit(getClientIp(request));
+  if (!rate.allowed) return errorResponse(429, "RATE_LIMITED", "请求过于频繁，请稍后再试。");
+
   let rawBody: unknown;
   try {
     rawBody = await request.json();
@@ -29,12 +33,24 @@ export async function POST(request: Request) {
     const reportId = crypto.randomUUID();
     const cycleId = crypto.randomUUID();
     const retrieved = retrieve(input.data);
-    const remote = await requestRemoteReport(
-      retrieved,
-      buildPrompt(input.data, retrieved),
-      decisionId,
-      reportId,
-    );
+    const shouldUseRemote = input.data.analysisMode !== "local";
+    const remote = shouldUseRemote
+      ? await requestRemoteReport(
+          retrieved,
+          buildPrompt(input.data, retrieved),
+          decisionId,
+          reportId,
+          input.data,
+        )
+      : {
+          report: null,
+          errorCode: "USER_SELECTED_LOCAL" as const,
+          provider: "local",
+          model: null,
+          quality: { qualityScore: 100, qualityWarnings: [], qualityPassed: true },
+          attempted: false,
+          succeeded: false,
+        };
     const report = remote.report ?? ReportSchema.parse({
       ...buildLocalReport(input.data, retrieved),
       decisionId,
@@ -48,6 +64,15 @@ export async function POST(request: Request) {
       report,
       remoteError: remote.errorCode,
       retrievedAt: new Date().toISOString(),
+      analysisMode: input.data.analysisMode,
+      provider: remote.report ? remote.provider : "local",
+      model: remote.report ? remote.model : null,
+      qualityScore: remote.report ? remote.quality.qualityScore : 100,
+      qualityWarnings: remote.report ? remote.quality.qualityWarnings : [],
+      qualityPassed: remote.report ? remote.quality.qualityPassed : true,
+      fallbackReason: remote.report ? null : remote.errorCode,
+      remoteAttempted: remote.attempted,
+      remoteSucceeded: remote.succeeded,
     });
     return NextResponse.json(response);
   } catch {
