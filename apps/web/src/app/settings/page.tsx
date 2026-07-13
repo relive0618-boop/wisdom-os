@@ -5,27 +5,34 @@ import { useEffect, useState } from "react";
 export default function SettingsPage() {
   const [theme, setTheme] = useState("light");
   const [stats, setStats] = useState({ cycles: 0, reviews: 0, itemsDone: 0 });
+  const [remote, setRemote] = useState<{ configured: boolean; model: string | null }>({ configured: false, model: null });
 
   useEffect(() => {
-    const t = localStorage.getItem("wisdom_theme") || "light";
-    setTheme(t);
-    document.documentElement.dataset.theme = t;
-    document.documentElement.classList.toggle("dark", t === "dark");
+    const timer = window.setTimeout(() => {
+      const t = localStorage.getItem("wisdom_theme") || "light";
+      setTheme(t);
+      document.documentElement.dataset.theme = t;
+      document.documentElement.classList.toggle("dark", t === "dark");
 
-    // Compute stats from localStorage
-    let cycles = 0, reviews = 0, itemsDone = 0;
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key?.startsWith("wisdom_pdca_")) {
-        try {
-          const c = JSON.parse(localStorage.getItem(key) || "");
-          cycles++;
-          reviews += c.checkins?.length || 0;
-          itemsDone += c.items?.filter((i: any) => i.status === "done").length || 0;
-        } catch {}
+      let cycles = 0, reviews = 0, itemsDone = 0;
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith("wisdom_pdca_cycle_")) {
+          try {
+            const c = JSON.parse(localStorage.getItem(key) || "") as { checkins?: unknown[]; items?: Array<{ status?: string }> };
+            cycles++;
+            reviews += c.checkins?.length || 0;
+            itemsDone += c.items?.filter((item) => item.status === "done").length || 0;
+          } catch { /* Ignore malformed local records. */ }
+        }
       }
-    }
-    setStats({ cycles, reviews, itemsDone });
+      setStats({ cycles, reviews, itemsDone });
+    }, 0);
+    fetch("/api/health")
+      .then((res) => res.json())
+      .then((data: { remote?: { configured: boolean; model: string | null } }) => setRemote(data.remote || { configured: false, model: null }))
+      .catch(() => setRemote({ configured: false, model: null }));
+    return () => window.clearTimeout(timer);
   }, []);
 
   function toggleTheme() {
@@ -71,8 +78,8 @@ export default function SettingsPage() {
                   通过服务器环境变量配置
                 </p>
               </div>
-              <span className="rounded-full bg-[#eee9df] px-2.5 py-0.5 text-[10px] font-medium text-[#77786f]">
-                未配置
+              <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-medium ${remote.configured ? "bg-green-100 text-green-700" : "bg-[#eee9df] text-[#77786f]"}`}>
+                {remote.configured ? `已配置${remote.model ? ` · ${remote.model}` : ""}` : "未配置"}
               </span>
             </div>
           </div>
@@ -104,7 +111,7 @@ export default function SettingsPage() {
                 </p>
               </div>
               <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-[10px] font-medium text-green-700">
-                本机
+                  本机持久化
               </span>
             </div>
 
@@ -172,7 +179,7 @@ export default function SettingsPage() {
       </div>
 
       <p className="mt-8 text-center text-[11px] text-[#77786f]">
-        AI Wisdom OS v0.1 · 你的数据只保存在本机浏览器中
+        AI Wisdom OS v0.2 · 报告与 PDCA 保存在本机浏览器中
       </p>
     </div>
   );

@@ -13,29 +13,19 @@ import {
   createNewCycle,
   cycleProgress,
 } from "@/lib/pdca";
+import { loadReport, migrateLastReport, migrateLegacyCycles, type StoredReport } from "@/lib/reportStore";
 
 // ─── Status badge ──────────────────────────────────────────────────────
 
-function StatusBadge({ status }: { status: PdcaItem["status"] }) {
-  const m: Record<string, { label: string; cls: string }> = {
-    pending: { label: "待处理", cls: "bg-[#eee9df] text-[#77786f]" },
-    in_progress: { label: "进行中", cls: "bg-blue-100 text-blue-700" },
-    done: { label: "已完成", cls: "bg-green-100 text-green-700" },
-    blocked: { label: "卡住", cls: "bg-red-100 text-red-700" },
-  };
-  const { label, cls } = m[status] || m.pending;
-  return (
-    <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-medium ${cls}`}>
-      {label}
-    </span>
-  );
+function reportTitleFor(data: { report?: { problem_summary?: string } }) {
+  return data.report?.problem_summary?.slice(0, 40) || "untitled";
 }
 
 // ─── Main component ────────────────────────────────────────────────────
 
 function ReportContent() {
   const searchParams = useSearchParams();
-  const [data, setData] = useState<{ report: any } | null>(null);
+  const [data, setData] = useState<StoredReport | null>(null);
   const [cycle, setCycle] = useState<PdcaCycle | null>(null);
   const [showCheckin, setShowCheckin] = useState(false);
   const [showNewCycle, setShowNewCycle] = useState(false);
@@ -48,23 +38,24 @@ function ReportContent() {
   // Load report
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem("lastReport");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        setData(parsed);
-
-        // Load existing cycle or create new one
-        const title = parsed.report?.problem_summary?.slice(0, 40) || "untitled";
-        let existing = loadCycle(title);
-        if (!existing) {
-          const items = generateInitialItems(parsed.report);
-          existing = createNewCycle(title, parsed.report?.category || "综合决策", items, 1);
-          saveCycle(title, existing);
-        }
-        setCycle(existing);
+      const reportId = searchParams.get("reportId");
+      const requestedCycleId = searchParams.get("cycleId");
+      const parsed = (reportId ? loadReport(reportId) : null) || (!reportId ? migrateLastReport() : null);
+      if (parsed) {
+        migrateLegacyCycles();
+        window.setTimeout(() => {
+          setData(parsed);
+          let existing = loadCycle(requestedCycleId || parsed.cycleId);
+          if (!existing) {
+            const items = generateInitialItems(parsed.report);
+            existing = createNewCycle(parsed.reportId, parsed.decisionId, reportTitleFor(parsed), parsed.report?.category || "综合决策", items, 1, requestedCycleId || parsed.cycleId);
+            saveCycle(existing);
+          }
+          setCycle(existing);
+        }, 0);
       }
-    } catch {}
-  }, []);
+    } catch { /* Invalid local data is treated as an empty report state. */ }
+  }, [searchParams]);
 
   // Update a single item
   const updateItem = useCallback(
@@ -75,9 +66,9 @@ function ReportContent() {
         items: cycle.items.map((i) => (i.id === itemId ? { ...i, ...patch } : i)),
       };
       setCycle(updated);
-      saveCycle(reportTitle, updated);
+      saveCycle(updated);
     },
-    [cycle, data, reportTitle],
+    [cycle, data],
   );
 
   // Add a custom item
@@ -97,9 +88,9 @@ function ReportContent() {
         items: [...cycle.items, newItem],
       };
       setCycle(updated);
-      saveCycle(reportTitle, updated);
+      saveCycle(updated);
     },
-    [cycle, data, reportTitle],
+    [cycle, data],
   );
 
   // Submit check-in
@@ -111,10 +102,10 @@ function ReportContent() {
         checkins: [...cycle.checkins, checkin],
       };
       setCycle(updated);
-      saveCycle(reportTitle, updated);
+      saveCycle(updated);
       setShowCheckin(false);
     },
-    [cycle, data, reportTitle],
+    [cycle, data],
   );
 
   // Complete cycle with reflection
@@ -127,9 +118,9 @@ function ReportContent() {
         reflection,
       };
       setCycle(updated);
-      saveCycle(reportTitle, updated);
+      saveCycle(updated);
     },
-    [cycle, data, reportTitle],
+    [cycle, data],
   );
 
   // Start a new cycle
@@ -142,9 +133,9 @@ function ReportContent() {
       .filter((i) => i.status !== "done")
       .map((i) => ({ ...i, id: `carry-${Date.now()}-${Math.random().toString(36).slice(2)}`, status: "pending" as const }));
     const all = [...carryOver, ...items];
-    const newCycle = createNewCycle(reportTitle, data.report?.category || "综合决策", all, nextNum);
+    const newCycle = createNewCycle(data.reportId, data.decisionId, reportTitle, data.report?.category || "综合决策", all, nextNum);
     setCycle(newCycle);
-    saveCycle(reportTitle, newCycle);
+    saveCycle(newCycle);
     setShowNewCycle(false);
   }, [cycle, data, reportTitle]);
 
@@ -187,14 +178,14 @@ function ReportContent() {
   const prog = cycle ? cycleProgress(cycle.items) : null;
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 p-8">
+    <div className="mx-auto max-w-4xl space-y-4 p-4 pb-24 sm:p-8 sm:pb-8">
       {/* ===== Report Header ===== */}
-      <div className="flex items-start justify-between gap-6">
-        <div>
+      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:gap-6">
+        <div className="min-w-0">
           <span className="text-xs font-bold uppercase tracking-widest text-[#8a4d2e]">
             {r.mode === "remote" ? "Remote AI Report" : "Local Wisdom Report"}
           </span>
-          <h2 className="font-serif text-3xl leading-tight">
+          <h2 className="font-serif text-2xl leading-tight sm:text-3xl">
             {r.category || "综合决策"}策略报告
           </h2>
           <p className="mt-2 leading-relaxed text-[#77786f]">{r.problem_summary}</p>
@@ -217,7 +208,7 @@ function ReportContent() {
         <h3 className="mb-3 text-sm font-semibold">局势判断</h3>
         <p className="leading-relaxed text-[#77786f]">{r.situation_assessment}</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          {r.citations?.map((c: any, i: number) => (
+          {r.citations?.map((c, i) => (
             <span key={i} className="rounded-lg bg-[#eee9df] px-2 py-1 text-xs text-[#77786f]">
               {c.chapter} · {c.title}
             </span>
@@ -229,7 +220,7 @@ function ReportContent() {
       <section className="rounded-xl border border-[#ded8cc] bg-[#fffdf9] p-6">
         <h3 className="mb-4 text-sm font-semibold">三种策略方案</h3>
         <div className="grid gap-4 md:grid-cols-3">
-          {r.strategies?.map((s: any, i: number) => (
+          {r.strategies?.map((s, i) => (
             <StrategyCard
               key={i}
               name={s.name}
@@ -484,7 +475,7 @@ function ReportContent() {
         <section className="rounded-xl border border-[#ded8cc] bg-[#fffdf9] p-6">
           <h3 className="mb-4 text-sm font-semibold">引用来源</h3>
           <div className="space-y-4">
-            {r.citations.map((c: any, i: number) => (
+            {r.citations.map((c, i) => (
               <div key={i} className="border-b border-[#ded8cc] pb-4 last:border-0">
                 <span className="text-xs font-bold text-[#8a4d2e]">{c.chapter}</span>
                 <h4 className="text-sm font-semibold">{c.title}</h4>
@@ -558,7 +549,7 @@ function CheckinModal({
             <label key={key} className="block">
               <span className="mb-1 block text-xs font-bold text-[#555]">{label}</span>
               <textarea
-                value={(form as any)[key]}
+                value={form[key]}
                 onChange={(e) => setForm({ ...form, [key]: e.target.value })}
                 placeholder={hint}
                 rows={2}
@@ -625,7 +616,7 @@ function NewCycleModal({
             <label key={key} className="block">
               <span className="mb-1 block text-xs font-bold text-[#555]">{label}</span>
               <textarea
-                value={(form as any)[key]}
+                value={form[key]}
                 onChange={(e) => setForm({ ...form, [key]: e.target.value })}
                 rows={2}
                 className="w-full rounded-xl border border-[#ded8cc] bg-[#f4f1ea] px-4 py-2.5 text-sm outline-none focus:border-[#8a4d2e]"

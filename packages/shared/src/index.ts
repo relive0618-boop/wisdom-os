@@ -28,6 +28,11 @@ export const CaseSchema = z.object({
   result: z.string(),
   lessons: z.array(z.string()),
   tags: z.array(z.string()),
+  case_type: z.enum(["real", "composite"]).default("composite"),
+  source_title: z.string().nullable().default(null),
+  source_url: z.string().url().nullable().default(null),
+  source_date: z.string().date().nullable().default(null),
+  review_status: z.enum(["reviewed", "pending"]).default("reviewed"),
 });
 
 export type Case = z.infer<typeof CaseSchema>;
@@ -69,6 +74,8 @@ export type Strategy = z.infer<typeof StrategySchema>;
 // ─── Report ─────────────────────────────────────────────────────────────
 
 export const ReportSchema = z.object({
+  decisionId: z.string().min(1),
+  reportId: z.string().min(1),
   mode: z.enum(["local", "remote"]),
   category: z.string(),
   problem_summary: z.string().min(1),
@@ -89,14 +96,15 @@ export type Report = z.infer<typeof ReportSchema>;
 // ─── Analyze Input ──────────────────────────────────────────────────────
 
 export const AnalyzeInputSchema = z.object({
-  title: z.string().optional().default(""),
-  question: z.string().optional().default(""),
-  category: z.string().optional().default("自动判断"),
-  background: z.string().optional().default(""),
-  goal: z.string().optional().default(""),
-  resources: z.string().optional().default(""),
-  constraints: z.string().optional().default(""),
-  risks: z.string().optional().default(""),
+  title: z.string().trim().max(80).optional().default(""),
+  question: z.string().trim().min(1).max(2000),
+  category: z.string().trim().min(1).max(80).optional().default("自动判断"),
+  background: z.string().trim().max(4000).optional().default(""),
+  goal: z.string().trim().max(1000).optional().default(""),
+  resources: z.string().trim().max(2000).optional().default(""),
+  constraints: z.string().trim().max(2000).optional().default(""),
+  risks: z.string().trim().max(2000).optional().default(""),
+  deadline: z.union([z.literal(""), z.string().date()]).optional().default(""),
 });
 
 export type AnalyzeInput = z.infer<typeof AnalyzeInputSchema>;
@@ -104,9 +112,68 @@ export type AnalyzeInput = z.infer<typeof AnalyzeInputSchema>;
 // ─── Analyze Response ───────────────────────────────────────────────────
 
 export const AnalyzeResponseSchema = z.object({
+  decisionId: z.string().min(1),
+  reportId: z.string().min(1),
+  cycleId: z.string().min(1),
   report: ReportSchema,
   remoteError: z.string().nullable().optional(),
   retrievedAt: z.string(),
 });
 
 export type AnalyzeResponse = z.infer<typeof AnalyzeResponseSchema>;
+
+export const HealthResponseSchema = z.object({
+  ok: z.boolean(),
+  app: z.string(),
+  remote: z.object({
+    configured: z.boolean(),
+    baseUrl: z.string().nullable(),
+    model: z.string().nullable(),
+  }),
+  mode: z.enum(["local", "remote"]),
+});
+
+export const PdcaItemSchema = z.object({
+  id: z.string().min(1),
+  text: z.string().min(1),
+  status: z.enum(["pending", "in_progress", "done", "blocked"]),
+  note: z.string(),
+  source: z.enum(["strategy", "action_plan", "custom"]),
+  strategyName: z.string().optional(),
+  createdAt: z.string().min(1),
+});
+
+export const PdcaCheckinSchema = z.object({
+  id: z.string().min(1),
+  date: z.string().min(1),
+  whatWorked: z.string(),
+  whatDidnt: z.string(),
+  lesson: z.string(),
+  adjustNext: z.string(),
+});
+
+export const PdcaReflectionSchema = z.object({
+  outcome: z.string(),
+  keyLesson: z.string(),
+  nextFocus: z.string(),
+});
+
+export const PdcaCycleSchema = z.object({
+  id: z.string().min(1),
+  cycleId: z.string().min(1),
+  reportId: z.string().min(1),
+  decisionId: z.string().min(1),
+  cycleNumber: z.number().int().positive(),
+  reportTitle: z.string(),
+  reportCategory: z.string(),
+  startedAt: z.string().min(1),
+  completedAt: z.string().nullable(),
+  items: z.array(PdcaItemSchema),
+  checkins: z.array(PdcaCheckinSchema),
+  reflection: PdcaReflectionSchema.nullable(),
+  legacyKey: z.string().optional(),
+});
+
+export type PdcaItem = z.infer<typeof PdcaItemSchema>;
+export type PdcaCheckin = z.infer<typeof PdcaCheckinSchema>;
+export type PdcaCycle = z.infer<typeof PdcaCycleSchema>;

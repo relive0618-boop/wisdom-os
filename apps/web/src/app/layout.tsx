@@ -35,8 +35,16 @@ export default function RootLayout({
   return (
     <html
       lang="zh-CN"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem("wisdom_theme");if(t){document.documentElement.dataset.theme=t;}}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body className="flex min-h-full font-sans">
         {/* ==================== Mobile Bottom Nav ==================== */}
         <nav className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-[#ded8cc] bg-[#fffdf9] md:hidden">

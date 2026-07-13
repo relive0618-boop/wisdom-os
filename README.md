@@ -24,7 +24,7 @@ pnpm dev
 - **框架** — Next.js 16 (App Router + Turbopack)
 - **语言** — TypeScript
 - **样式** — Tailwind CSS v4
-- **数据** — 当前为 JSON 文件 + localStorage（P0 为 Supabase + pgvector）
+- **数据** — JSON 知识库 + 浏览器 localStorage（报告与每轮 PDCA 独立保存）
 - **共享类型** — `packages/shared`（Zod schemas）
 
 ## 项目结构
@@ -43,7 +43,7 @@ wisdom-os/
 ## 架构
 
 当前使用本地知识引擎（`lib/engine.js`）进行规则检索与策略生成，无需任何 API Key。
-通过环境变量配置 OpenAI-compatible API 后可启用远程 AI 模式。
+通过服务器环境变量配置 OpenAI-compatible API 后可启用远程 AI 模式。API 会用 Zod 验证输入、远程输出和最终报告；远程请求失败时自动回退本地引擎。
 
 ### 双模式设计
 
@@ -63,15 +63,24 @@ wisdom-os/
 
 ## 配置
 
-参考 `.env.example`：
+参考 `.env.example`。这些变量只能配置在 Vercel Project Settings 的 Environment Variables，不能使用 `NEXT_PUBLIC_` 前缀，也不会发送到浏览器：
 
 ```
 AI_BASE_URL=https://api.openai.com/v1/chat/completions
 AI_API_KEY=sk-xxx
-AI_MODEL=gpt-4o
+AI_MODEL=gpt-4o-mini
 ```
 
-不配置时自动使用本地引擎。
+不配置或请求失败时自动使用本地引擎。`/api/health` 只返回是否完整配置、endpoint 和模型名称，不返回 API Key。
+
+## Vercel 部署
+
+1. 在 Vercel 中将 Root Directory 留空，使用 repository 根目录。repository 根目录已包含 `package.json`、`pnpm-workspace.yaml`、`vercel.json`、`apps` 与 `packages`。本机执行命令时才需要先进入 `wisdom-os` 文件夹。
+2. 使用默认的 `pnpm install` 与 `pnpm run build`。
+3. 在 Preview 与 Production 环境分别设置 `AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL`；不设置也可以零成本运行本地模式。
+4. 部署后访问 `/api/health`，确认 `remote.configured` 是否符合预期。
+
+报告和 PDCA 当前保存在浏览器本机；清除浏览器站点数据会删除这些记录。云端同步仍是后续 Supabase 计划。
 
 ## 路线图
 
@@ -80,7 +89,9 @@ AI_MODEL=gpt-4o
 - [x] 现代案例库
 - [x] 三步引导式输入
 - [x] PDCA 循环追踪
-- [x] 决策历史 + 本地持久化
+- [x] 决策历史 + 报告/PDCA 本地持久化
+- [x] OpenAI-compatible 远程 AI + 本地 fallback
+- [x] Zod 输入、输出与报告校验
 - [ ] Supabase 云同步
 - [ ] 管理后台（知识 CRUD + 审核流程）
 - [ ] 个人决策模型（偏好学习）
