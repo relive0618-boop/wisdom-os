@@ -1,6 +1,34 @@
 import type { AnalyzeInput, Report, RetrievalResult, ReportQuality } from "@wisdom/shared";
 import type { RemoteErrorCode } from "./errors";
 
+export type ProviderContentShape = "string" | "text_blocks" | "missing" | "unsupported";
+export type ProviderFinishReason = "stop" | "length" | "content_filter" | "tool_calls" | "unknown" | null;
+export type ProviderJsonExtraction = "direct" | "fenced" | "balanced_object" | "failed" | "not_attempted";
+
+export interface ProviderDiagnostics {
+  providerPayloadParsed: boolean;
+  providerContentPresent: boolean;
+  providerContentShape: ProviderContentShape;
+  providerContentLength: number | null;
+  providerFinishReason: ProviderFinishReason;
+  providerJsonExtraction: ProviderJsonExtraction;
+  providerPromptTokens: number | null;
+  providerCompletionTokens: number | null;
+}
+
+export function emptyProviderDiagnostics(): ProviderDiagnostics {
+  return {
+    providerPayloadParsed: false,
+    providerContentPresent: false,
+    providerContentShape: "missing",
+    providerContentLength: null,
+    providerFinishReason: null,
+    providerJsonExtraction: "not_attempted",
+    providerPromptTokens: null,
+    providerCompletionTokens: null,
+  };
+}
+
 export interface ProviderInput {
   input: AnalyzeInput;
   retrieved: RetrievalResult;
@@ -9,7 +37,7 @@ export interface ProviderInput {
   reportId: string;
 }
 
-export interface ProviderResult {
+export interface ProviderResult extends ProviderDiagnostics {
   report: Report | null;
   errorCode: RemoteErrorCode | null;
   provider: string;

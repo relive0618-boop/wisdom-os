@@ -140,6 +140,14 @@ export const AnalyzeResponseSchema = z.object({
   remoteLatencyMs: z.number().int().nonnegative().nullable().optional().default(null),
   remoteAttempts: z.number().int().nonnegative().optional().default(0),
   remoteRepaired: z.boolean().optional().default(false),
+  remotePayloadParsed: z.boolean().optional().default(false),
+  remoteContentPresent: z.boolean().optional().default(false),
+  remoteContentShape: z.enum(["string", "text_blocks", "missing", "unsupported"]).optional().default("missing"),
+  remoteContentLength: z.number().int().nonnegative().nullable().optional().default(null),
+  remoteFinishReason: z.enum(["stop", "length", "content_filter", "tool_calls", "unknown"]).nullable().optional().default(null),
+  remoteJsonExtraction: z.enum(["direct", "fenced", "balanced_object", "failed", "not_attempted"]).optional().default("not_attempted"),
+  remotePromptTokens: z.number().int().nonnegative().nullable().optional().default(null),
+  remoteCompletionTokens: z.number().int().nonnegative().nullable().optional().default(null),
 });
 
 export type AnalyzeResponse = z.infer<typeof AnalyzeResponseSchema>;

@@ -53,6 +53,14 @@ export async function POST(request: Request) {
           latencyMs: 0,
           attempts: 0,
           repaired: false,
+          providerPayloadParsed: false,
+          providerContentPresent: false,
+          providerContentShape: "missing" as const,
+          providerContentLength: null,
+          providerFinishReason: null,
+          providerJsonExtraction: "not_attempted" as const,
+          providerPromptTokens: null,
+          providerCompletionTokens: null,
         };
     const report = remote.report ?? ReportSchema.parse({
       ...buildLocalReport(input.data, retrieved),
@@ -79,6 +87,14 @@ export async function POST(request: Request) {
       remoteLatencyMs: remote.attempted ? remote.latencyMs : null,
       remoteAttempts: remote.attempts,
       remoteRepaired: remote.repaired,
+      remotePayloadParsed: remote.providerPayloadParsed,
+      remoteContentPresent: remote.providerContentPresent,
+      remoteContentShape: remote.providerContentShape,
+      remoteContentLength: remote.providerContentLength,
+      remoteFinishReason: remote.providerFinishReason,
+      remoteJsonExtraction: remote.providerJsonExtraction,
+      remotePromptTokens: remote.providerPromptTokens,
+      remoteCompletionTokens: remote.providerCompletionTokens,
     });
     return NextResponse.json(response);
   } catch {

@@ -207,6 +207,11 @@ function ReportContent() {
         {data.remoteLatencyMs !== null && data.remoteLatencyMs !== undefined && <span>远端耗时：{(data.remoteLatencyMs / 1000).toFixed(1)} 秒</span>}
         <span>远端尝试：{data.remoteAttempts ?? 0}</span>
         {data.remoteRepaired && <span>已执行品质修复</span>}
+        {data.remoteFinishReason && <span>Finish：{data.remoteFinishReason}</span>}
+        <span>JSON：{data.remoteJsonExtraction ?? "not_attempted"}</span>
+        {data.remoteContentLength !== null && data.remoteContentLength !== undefined && <span>Content：{data.remoteContentLength} 字符</span>}
+        {data.remotePromptTokens !== null && data.remotePromptTokens !== undefined && <span>Prompt tokens：{data.remotePromptTokens}</span>}
+        {data.remoteCompletionTokens !== null && data.remoteCompletionTokens !== undefined && <span>Completion tokens：{data.remoteCompletionTokens}</span>}
         {data.fallbackReason && <span>Fallback：{data.fallbackReason}</span>}
       </section>
 

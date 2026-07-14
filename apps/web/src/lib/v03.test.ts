@@ -213,6 +213,33 @@ test("舊報告可讀取新增遠端欄位預設值", () => {
   assert.equal(parsed.remoteLatencyMs, null); assert.equal(parsed.remoteAttempts, 0); assert.equal(parsed.remoteRepaired, false);
 });
 
+test("舊 StoredReport 可讀取安全診斷欄位預設值", () => {
+  const stored = AnalyzeResponseSchema.parse({ decisionId: "d", reportId: "r", cycleId: "c", report: { ...report(), mode: "local", decisionId: "d", reportId: "r" }, retrievedAt: new Date().toISOString() });
+  assert.equal(stored.remotePayloadParsed, false); assert.equal(stored.remoteContentLength, null); assert.equal(stored.remoteJsonExtraction, "not_attempted");
+});
+
+test("Analyze API response 不包含 Provider raw content", async () => {
+  configure(); resetRateLimit();
+  const original = globalThis.fetch;
+  const rawContentMarker = "provider-content-must-not-leave-server";
+  globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: `${rawContentMarker}\n${JSON.stringify(report())}` } }] }), { status: 200 });
+  const response = await analyzePOST(new Request("http://localhost/api/analyze", { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": "raw-content-test" }, body: JSON.stringify({ ...input, analysisMode: "remote" }) }));
+  const payload = await response.json();
+  globalThis.fetch = original; clear(); resetRateLimit();
+  assert.equal(response.status, 200); assert.equal(JSON.stringify(payload).includes(rawContentMarker), false);
+});
+
+test("Analyze API response 不包含 Provider payload", async () => {
+  configure(); resetRateLimit();
+  const original = globalThis.fetch;
+  const rawPayloadMarker = "provider-payload-must-not-leave-server";
+  globalThis.fetch = async () => new Response(JSON.stringify({ internal_debug: rawPayloadMarker, choices: [{ message: { content: JSON.stringify(report()) } }] }), { status: 200 });
+  const response = await analyzePOST(new Request("http://localhost/api/analyze", { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": "raw-payload-test" }, body: JSON.stringify({ ...input, analysisMode: "remote" }) }));
+  const payload = await response.json();
+  globalThis.fetch = original; clear(); resetRateLimit();
+  assert.equal(response.status, 200); assert.equal(JSON.stringify(payload).includes(rawPayloadMarker), false);
+});
+
 test("health 顯示安全相容設定", async () => {
   configure(); process.env.AI_MAX_OUTPUT_TOKENS = "2200"; process.env.AI_RESPONSE_FORMAT_MODE = "json_object"; process.env.AI_TOTAL_BUDGET_MS = "30000";
   const payload = await (await healthGET()).json(); clear();

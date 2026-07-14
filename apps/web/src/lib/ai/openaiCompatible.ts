@@ -3,40 +3,53 @@ import { validateCitationProvenance } from "./citations";
 import { remoteConfig } from "./config";
 import { isTimeoutError, type RemoteErrorCode } from "./errors";
 import { assessReportQuality } from "./quality";
-import type { AiProvider, ProviderInput, ProviderResult } from "./types";
+import { extractAssistantText, extractJsonObject, payloadDiagnostics } from "./responseParser";
+import { emptyProviderDiagnostics, type AiProvider, type ProviderDiagnostics, type ProviderInput, type ProviderResult } from "./types";
 
 const REPAIR_MIN_REMAINING_MS = 10_000;
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 
-function extractJson(content: string): unknown {
-  const trimmed = content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  return JSON.parse(trimmed);
-}
-
 function failedResult(
   errorCode: RemoteErrorCode,
   model: string | null,
-  warnings: string[] = [],
-  latencyMs = 0,
-  attempts = 0,
-  repaired = false,
+  options: {
+    warnings?: string[];
+    latencyMs?: number;
+    attempts?: number;
+    repaired?: boolean;
+    diagnostics?: ProviderDiagnostics;
+  } = {},
 ): ProviderResult {
   return {
     report: null,
     errorCode,
     provider: "openai-compatible",
     model,
-    quality: ReportQualitySchema.parse({ qualityScore: 0, qualityWarnings: warnings, qualityPassed: false }),
-    attempted: attempts > 0,
+    quality: ReportQualitySchema.parse({ qualityScore: 0, qualityWarnings: options.warnings ?? [], qualityPassed: false }),
+    attempted: (options.attempts ?? 0) > 0,
     succeeded: false,
-    latencyMs,
-    attempts,
-    repaired,
+    latencyMs: options.latencyMs ?? 0,
+    attempts: options.attempts ?? 0,
+    repaired: options.repaired ?? false,
+    ...(options.diagnostics ?? emptyProviderDiagnostics()),
   };
 }
 
 function withMetrics(result: ProviderResult, startedAt: number, attempts: number, repaired = result.repaired): ProviderResult {
   return { ...result, latencyMs: Math.max(0, Date.now() - startedAt), attempts, repaired };
+}
+
+function diagnosticsOf(result: ProviderResult): ProviderDiagnostics {
+  return {
+    providerPayloadParsed: result.providerPayloadParsed,
+    providerContentPresent: result.providerContentPresent,
+    providerContentShape: result.providerContentShape,
+    providerContentLength: result.providerContentLength,
+    providerFinishReason: result.providerFinishReason,
+    providerJsonExtraction: result.providerJsonExtraction,
+    providerPromptTokens: result.providerPromptTokens,
+    providerCompletionTokens: result.providerCompletionTokens,
+  };
 }
 
 export class OpenAiCompatibleProvider implements AiProvider {
@@ -58,9 +71,12 @@ export class OpenAiCompatibleProvider implements AiProvider {
       return failedResult(
         "REMOTE_QUALITY_FAILED",
         config.model,
-        first.quality.qualityWarnings,
-        Math.max(0, Date.now() - startedAt),
-        first.attempts,
+        {
+          warnings: first.quality.qualityWarnings,
+          latencyMs: Math.max(0, Date.now() - startedAt),
+          attempts: first.attempts,
+          diagnostics: diagnosticsOf(first),
+        },
       );
     }
 
@@ -73,10 +89,13 @@ export class OpenAiCompatibleProvider implements AiProvider {
     return failedResult(
       "REMOTE_QUALITY_FAILED",
       config.model,
-      repaired.quality.qualityWarnings.length ? repaired.quality.qualityWarnings : first.quality.qualityWarnings,
-      Math.max(0, Date.now() - startedAt),
-      totalAttempts,
-      true,
+      {
+        warnings: repaired.quality.qualityWarnings.length ? repaired.quality.qualityWarnings : first.quality.qualityWarnings,
+        latencyMs: Math.max(0, Date.now() - startedAt),
+        attempts: totalAttempts,
+        repaired: true,
+        diagnostics: diagnosticsOf(repaired),
+      },
     );
   }
 
@@ -90,7 +109,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
     let attempts = 0;
     for (let retry = 0; retry <= config.maxRetries; retry += 1) {
       const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) return failedResult("REMOTE_TIMEOUT", config.model, [], Math.max(0, Date.now() - startedAt), attempts);
+      if (remainingMs <= 0) return failedResult("REMOTE_TIMEOUT", config.model, { latencyMs: Math.max(0, Date.now() - startedAt), attempts });
       attempts += 1;
       try {
         const requestBody: Record<string, unknown> = {
@@ -115,34 +134,52 @@ export class OpenAiCompatibleProvider implements AiProvider {
         });
         if (!response.ok) {
           if (RETRYABLE_STATUS_CODES.has(response.status) && retry < config.maxRetries) continue;
-          return failedResult("REMOTE_HTTP_ERROR", config.model, [], Math.max(0, Date.now() - startedAt), attempts);
+          return failedResult("REMOTE_HTTP_ERROR", config.model, { latencyMs: Math.max(0, Date.now() - startedAt), attempts });
         }
 
         let payload: unknown;
         try {
           payload = await response.json();
         } catch {
-          return failedResult("REMOTE_INVALID_JSON", config.model, [], Math.max(0, Date.now() - startedAt), attempts);
+          return failedResult("REMOTE_INVALID_JSON", config.model, { latencyMs: Math.max(0, Date.now() - startedAt), attempts });
         }
-        const content = (payload as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]?.message?.content;
-        if (!content) return failedResult("REMOTE_INVALID_JSON", config.model, [], Math.max(0, Date.now() - startedAt), attempts);
+        const diagnostics = payloadDiagnostics(payload);
+        const assistant = extractAssistantText(payload);
+        if (assistant.text === null) {
+          return failedResult("REMOTE_INVALID_JSON", config.model, { latencyMs: Math.max(0, Date.now() - startedAt), attempts, diagnostics });
+        }
 
-        let candidate: unknown;
-        try {
-          candidate = extractJson(content);
-        } catch {
-          return failedResult("REMOTE_INVALID_JSON", config.model, [], Math.max(0, Date.now() - startedAt), attempts);
+        const extracted = extractJsonObject(assistant.text);
+        const extractionDiagnostics = { ...diagnostics, providerJsonExtraction: extracted.method };
+        if (!extracted.value) {
+          return failedResult("REMOTE_INVALID_JSON", config.model, {
+            latencyMs: Math.max(0, Date.now() - startedAt),
+            attempts,
+            diagnostics: extractionDiagnostics,
+          });
         }
         const parsed = ReportSchema.safeParse({
-          ...(candidate as object),
+          ...extracted.value,
           decisionId: input.decisionId,
           reportId: input.reportId,
           mode: "remote",
           case_refs: input.retrieved.cases,
         });
-        if (!parsed.success) return failedResult("REMOTE_SCHEMA_INVALID", config.model, [], Math.max(0, Date.now() - startedAt), attempts);
+        if (!parsed.success) {
+          return failedResult("REMOTE_SCHEMA_INVALID", config.model, {
+            latencyMs: Math.max(0, Date.now() - startedAt),
+            attempts,
+            diagnostics: extractionDiagnostics,
+          });
+        }
         const validated = validateCitationProvenance(parsed.data, input.retrieved);
-        if (!validated) return failedResult("REMOTE_CITATION_INVALID", config.model, [], Math.max(0, Date.now() - startedAt), attempts);
+        if (!validated) {
+          return failedResult("REMOTE_CITATION_INVALID", config.model, {
+            latencyMs: Math.max(0, Date.now() - startedAt),
+            attempts,
+            diagnostics: extractionDiagnostics,
+          });
+        }
         const quality = assessReportQuality(validated, input.input.question);
         return {
           report: validated,
@@ -155,14 +192,17 @@ export class OpenAiCompatibleProvider implements AiProvider {
           latencyMs: Math.max(0, Date.now() - startedAt),
           attempts,
           repaired: false,
+          ...extractionDiagnostics,
         };
       } catch (error) {
-        if (isTimeoutError(error)) return failedResult("REMOTE_TIMEOUT", config.model, [], Math.max(0, Date.now() - startedAt), attempts);
+        if (isTimeoutError(error)) {
+          return failedResult("REMOTE_TIMEOUT", config.model, { latencyMs: Math.max(0, Date.now() - startedAt), attempts });
+        }
         if (retry < config.maxRetries) continue;
-        return failedResult("REMOTE_HTTP_ERROR", config.model, [], Math.max(0, Date.now() - startedAt), attempts);
+        return failedResult("REMOTE_HTTP_ERROR", config.model, { latencyMs: Math.max(0, Date.now() - startedAt), attempts });
       }
     }
-    return failedResult("REMOTE_HTTP_ERROR", config.model, [], Math.max(0, Date.now() - startedAt), attempts);
+    return failedResult("REMOTE_HTTP_ERROR", config.model, { latencyMs: Math.max(0, Date.now() - startedAt), attempts });
   }
 }
 
