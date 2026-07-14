@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { AnalyzeInputSchema, AnalyzeResponseSchema, ReportQualitySchema, ReportSchema, type Report } from "@wisdom/shared";
+import { AnalyzeInputSchema, AnalyzeResponseSchema, RemoteReportContentSchema, ReportQualitySchema, ReportSchema, type Report } from "@wisdom/shared";
 import { assessReportQuality } from "./ai/quality";
 import { remoteConfig, publicRemoteConfig } from "./ai/config";
 import { requestRemoteReport } from "./ai/openaiCompatible";
@@ -51,6 +51,24 @@ function report(): Report {
   });
 }
 
+function remoteContent(overrides: Record<string, unknown> = {}) {
+  const systemFields = new Set(["decisionId", "reportId", "mode", "category", "case_refs"]);
+  const content = Object.fromEntries(Object.entries(report()).filter(([key]) => !systemFields.has(key)));
+  return { ...content, ...overrides };
+}
+
+async function requestMockRemote(content: unknown) {
+  configure();
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }), { status: 200 });
+  try {
+    return await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  } finally {
+    globalThis.fetch = original;
+    clear();
+  }
+}
+
 function configure() {
   process.env.AI_BASE_URL = "https://example.test/v1/chat/completions";
   process.env.AI_API_KEY = "test-key";
@@ -83,6 +101,61 @@ test("遠端設定 retries 上限為 1", () => { process.env.AI_MAX_RETRIES = "9
 test("public config 不包含 API key", () => { configure(); assert.equal("apiKey" in publicRemoteConfig(), false); clear(); });
 test("remote provider 成功並回傳品質分數", async () => { configure(); const old = globalThis.fetch; const value = report(); globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(value) } }] }), { status: 200 }); const result = await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input); globalThis.fetch = old; clear(); assert.equal(result.errorCode, null); assert.ok(result.quality.qualityScore >= 70); });
 test("remote provider 移除 markdown fence", async () => { configure(); const old = globalThis.fetch; const value = report(); globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: `\`\`\`json\n${JSON.stringify(value)}\n\`\`\`` } }] }), { status: 200 }); const result = await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input); globalThis.fetch = old; clear(); assert.equal(result.errorCode, null); });
+test("模型不輸出 category 時由伺服器注入 retrieved.category", async () => {
+  const result = await requestMockRemote(remoteContent());
+  assert.equal(result.errorCode, null); assert.equal(result.report?.category, retrieved.category);
+});
+test("模型偽造 category 時由伺服器值覆蓋", async () => {
+  const result = await requestMockRemote({ ...remoteContent(), category: "伪造分类" });
+  assert.equal(result.report?.category, retrieved.category);
+});
+test("模型偽造 decisionId 時由伺服器值覆蓋", async () => {
+  const decisionId = crypto.randomUUID(); configure(); const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...remoteContent(), decisionId: "forged" }) } }] }), { status: 200 });
+  const result = await requestRemoteReport(retrieved, "prompt", decisionId, crypto.randomUUID(), input); globalThis.fetch = original; clear();
+  assert.equal(result.report?.decisionId, decisionId);
+});
+test("模型偽造 reportId 時由伺服器值覆蓋", async () => {
+  const reportId = crypto.randomUUID(); configure(); const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...remoteContent(), reportId: "forged" }) } }] }), { status: 200 });
+  const result = await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), reportId, input); globalThis.fetch = original; clear();
+  assert.equal(result.report?.reportId, reportId);
+});
+test("模型偽造 mode=local 時最終仍為 remote", async () => {
+  const result = await requestMockRemote({ ...remoteContent(), mode: "local" });
+  assert.equal(result.report?.mode, "remote");
+});
+test("模型偽造 case_refs 時由檢索案例覆蓋", async () => {
+  const result = await requestMockRemote({ ...remoteContent(), case_refs: [] });
+  assert.deepEqual(result.report?.case_refs?.map((item: { id: string }) => item.id), retrieved.cases.map((item: { id: string }) => item.id));
+});
+test("RemoteReportContentSchema 缺少 problem_summary 時失敗", () => {
+  const missing = remoteContent(); delete missing.problem_summary;
+  assert.equal(RemoteReportContentSchema.safeParse(missing).success, false);
+});
+test("RemoteReportContentSchema 拒絕錯誤 strategies 型態", () => {
+  assert.equal(RemoteReportContentSchema.safeParse(remoteContent({ strategies: "not-an-array" })).success, false);
+});
+test("RemoteReportContentSchema 拒絕非七項 action_plan_7d", () => {
+  assert.equal(RemoteReportContentSchema.safeParse(remoteContent({ action_plan_7d: ["one"] })).success, false);
+});
+test("Schema 診斷只保留路徑而不含模型值", async () => {
+  const privateValue = "model-value-must-not-leave-server";
+  const result = await requestMockRemote(remoteContent({ strategies: privateValue }));
+  assert.equal(result.errorCode, "REMOTE_SCHEMA_INVALID"); assert.ok(result.providerSchemaIssueCount > 0); assert.ok(result.providerSchemaIssuePaths.includes("strategies")); assert.equal(JSON.stringify(result).includes(privateValue), false);
+});
+test("Analyze response 不包含 Zod 原始 message", async () => {
+  configure(); resetRateLimit(); const original = globalThis.fetch;
+  const privateValue = "model-value-must-not-leave-server";
+  globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(remoteContent({ strategies: privateValue })) } }] }), { status: 200 });
+  const response = await analyzePOST(new Request("http://localhost/api/analyze", { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": "schema-message-test" }, body: JSON.stringify({ ...input, analysisMode: "remote" }) }));
+  const payload = await response.json(); globalThis.fetch = original; clear(); resetRateLimit();
+  assert.equal(response.status, 200); assert.equal(payload.remoteSchemaIssuePaths.includes("strategies"), true); assert.equal(JSON.stringify(payload).includes(privateValue), false); assert.equal(JSON.stringify(payload).includes("Expected array"), false);
+});
+test("舊保存報告可讀取 Schema 診斷預設值", () => {
+  const stored = AnalyzeResponseSchema.parse({ decisionId: "d", reportId: "r", cycleId: "c", report: { ...report(), mode: "local", decisionId: "d", reportId: "r" }, retrievedAt: new Date().toISOString() });
+  assert.equal(stored.remoteSchemaIssueCount, 0); assert.deepEqual(stored.remoteSchemaIssuePaths, []);
+});
 test("remote quality failure 會嘗試一次修復後回退", async () => { configure(); const old = globalThis.fetch; const bad = { ...report(), strategies: report().strategies.slice(0, 2) }; let calls = 0; globalThis.fetch = async () => { calls += 1; return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(bad) } }] }), { status: 200 }); }; const result = await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input); globalThis.fetch = old; clear(); assert.equal(calls, 2); assert.equal(result.errorCode, "REMOTE_QUALITY_FAILED"); });
 test("rate limit 每個 key 第 11 次拒絕", () => { resetRateLimit(); for (let i = 0; i < 10; i += 1) assert.equal(checkRateLimit("test-ip", 1000).allowed, true); assert.equal(checkRateLimit("test-ip", 1000).allowed, false); resetRateLimit(); });
 test("rate limit 不同 IP 分開計算", () => { resetRateLimit(); for (let i = 0; i < 10; i += 1) checkRateLimit("ip-a", 1000); assert.equal(checkRateLimit("ip-b", 1000).allowed, true); resetRateLimit(); });

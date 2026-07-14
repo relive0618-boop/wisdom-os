@@ -63,6 +63,8 @@ export async function POST(request: Request) {
           providerCompletionTokens: null,
           providerReasoningPresent: false,
           providerReasoningLength: null,
+          providerSchemaIssueCount: 0,
+          providerSchemaIssuePaths: [],
         };
     const report = remote.report ?? ReportSchema.parse({
       ...buildLocalReport(input.data, retrieved),
@@ -99,6 +101,8 @@ export async function POST(request: Request) {
       remoteCompletionTokens: remote.providerCompletionTokens,
       remoteReasoningPresent: remote.providerReasoningPresent,
       remoteReasoningLength: remote.providerReasoningLength,
+      remoteSchemaIssueCount: remote.providerSchemaIssueCount,
+      remoteSchemaIssuePaths: remote.providerSchemaIssuePaths,
     });
     return NextResponse.json(response);
   } catch {

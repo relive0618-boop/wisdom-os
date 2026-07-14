@@ -16,6 +16,8 @@ export interface ProviderDiagnostics {
   providerCompletionTokens: number | null;
   providerReasoningPresent: boolean;
   providerReasoningLength: number | null;
+  providerSchemaIssueCount: number;
+  providerSchemaIssuePaths: string[];
 }
 
 export function emptyProviderDiagnostics(): ProviderDiagnostics {
@@ -30,6 +32,8 @@ export function emptyProviderDiagnostics(): ProviderDiagnostics {
     providerCompletionTokens: null,
     providerReasoningPresent: false,
     providerReasoningLength: null,
+    providerSchemaIssueCount: 0,
+    providerSchemaIssuePaths: [],
   };
 }
 

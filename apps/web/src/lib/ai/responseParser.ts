@@ -169,5 +169,7 @@ export function payloadDiagnostics(payload: unknown): ProviderDiagnostics {
     providerCompletionTokens: usage.completionTokens,
     providerReasoningPresent: reasoning.present,
     providerReasoningLength: reasoning.length,
+    providerSchemaIssueCount: 0,
+    providerSchemaIssuePaths: [],
   };
 }

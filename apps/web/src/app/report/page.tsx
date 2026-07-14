@@ -213,6 +213,7 @@ function ReportContent() {
         {data.remotePromptTokens !== null && data.remotePromptTokens !== undefined && <span>Prompt tokens：{data.remotePromptTokens}</span>}
         {data.remoteCompletionTokens !== null && data.remoteCompletionTokens !== undefined && <span>Completion tokens：{data.remoteCompletionTokens}</span>}
         {data.remoteReasoningPresent && <span>Thinking：已产生{data.remoteReasoningLength !== null && data.remoteReasoningLength !== undefined ? `（${data.remoteReasoningLength} 字符）` : ""}</span>}
+        {data.remoteSchemaIssueCount > 0 && <span>Schema：{data.remoteSchemaIssueCount} 项（{data.remoteSchemaIssuePaths.join("、")}）</span>}
         {data.fallbackReason && <span>Fallback：{data.fallbackReason}</span>}
       </section>
 

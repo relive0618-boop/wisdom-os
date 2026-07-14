@@ -1,4 +1,5 @@
-import { ReportSchema, ReportQualitySchema } from "@wisdom/shared";
+import { RemoteReportContentSchema, ReportSchema, ReportQualitySchema } from "@wisdom/shared";
+import type { ZodError } from "zod";
 import { validateCitationProvenance } from "./citations";
 import { remoteConfig } from "./config";
 import { isTimeoutError, type RemoteErrorCode } from "./errors";
@@ -51,6 +52,15 @@ function diagnosticsOf(result: ProviderResult): ProviderDiagnostics {
     providerCompletionTokens: result.providerCompletionTokens,
     providerReasoningPresent: result.providerReasoningPresent,
     providerReasoningLength: result.providerReasoningLength,
+    providerSchemaIssueCount: result.providerSchemaIssueCount,
+    providerSchemaIssuePaths: result.providerSchemaIssuePaths,
+  };
+}
+
+function schemaDiagnostics(error: ZodError): Pick<ProviderDiagnostics, "providerSchemaIssueCount" | "providerSchemaIssuePaths"> {
+  return {
+    providerSchemaIssueCount: error.issues.length,
+    providerSchemaIssuePaths: [...new Set(error.issues.map((issue) => issue.path.map(String).join(".")))].slice(0, 10),
   };
 }
 
@@ -163,18 +173,27 @@ export class OpenAiCompatibleProvider implements AiProvider {
             diagnostics: extractionDiagnostics,
           });
         }
+        const remoteContent = RemoteReportContentSchema.safeParse(extracted.value);
+        if (!remoteContent.success) {
+          return failedResult("REMOTE_SCHEMA_INVALID", config.model, {
+            latencyMs: Math.max(0, Date.now() - startedAt),
+            attempts,
+            diagnostics: { ...extractionDiagnostics, ...schemaDiagnostics(remoteContent.error) },
+          });
+        }
         const parsed = ReportSchema.safeParse({
-          ...extracted.value,
+          ...remoteContent.data,
           decisionId: input.decisionId,
           reportId: input.reportId,
           mode: "remote",
+          category: input.retrieved.category,
           case_refs: input.retrieved.cases,
         });
         if (!parsed.success) {
           return failedResult("REMOTE_SCHEMA_INVALID", config.model, {
             latencyMs: Math.max(0, Date.now() - startedAt),
             attempts,
-            diagnostics: extractionDiagnostics,
+            diagnostics: { ...extractionDiagnostics, ...schemaDiagnostics(parsed.error) },
           });
         }
         const validated = validateCitationProvenance(parsed.data, input.retrieved);

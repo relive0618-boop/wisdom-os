@@ -93,6 +93,16 @@ export const ReportSchema = z.object({
 
 export type Report = z.infer<typeof ReportSchema>;
 
+export const RemoteReportContentSchema = ReportSchema.omit({
+  decisionId: true,
+  reportId: true,
+  mode: true,
+  category: true,
+  case_refs: true,
+});
+
+export type RemoteReportContent = z.infer<typeof RemoteReportContentSchema>;
+
 // ─── Analyze Input ──────────────────────────────────────────────────────
 
 export const AnalyzeInputSchema = z.object({
@@ -150,6 +160,8 @@ export const AnalyzeResponseSchema = z.object({
   remoteCompletionTokens: z.number().int().nonnegative().nullable().optional().default(null),
   remoteReasoningPresent: z.boolean().optional().default(false),
   remoteReasoningLength: z.number().int().nonnegative().nullable().optional().default(null),
+  remoteSchemaIssueCount: z.number().int().nonnegative().optional().default(0),
+  remoteSchemaIssuePaths: z.array(z.string()).max(10).optional().default([]),
 });
 
 export type AnalyzeResponse = z.infer<typeof AnalyzeResponseSchema>;

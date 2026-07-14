@@ -202,6 +202,7 @@ ${userContext}
 已审核知识（仅可引用这些条目）：
 ${knowledgeContext}
 只输出 JSON：单一 object，不得输出 Markdown code fence、思考过程或额外说明。字段必须为：problem_summary,core_conflict,situation_assessment,citations,strategies,recommended_strategy,risks,action_plan_7d,review_questions,disclaimer。
+decisionId、reportId、mode、category、case_refs 由服务器自动加入，不得输出。
 citations 至少2条；每条含 id,chapter,title,source,explanation，且 chapter、title、source 必须与上方条目逐字一致。
 strategies 正好3项；每项含 name,position,actions,suitable_when,risk；position 最多100个中文字；actions 正好3条且每条最多80个中文字。
 problem_summary 最多120个中文字；core_conflict 最多160个中文字；situation_assessment 最多260个中文字；recommended_strategy 最多180个中文字并说明理由；risks 为3到5条且每条最多100个中文字；action_plan_7d 正好7条；review_questions 为3到5条；disclaimer 最多100个中文字。`;
