@@ -4,6 +4,7 @@ import {
   extractAssistantText,
   extractFinishReason,
   extractJsonObject,
+  extractReasoningDiagnostics,
   extractUsage,
 } from "./ai/responseParser";
 
@@ -96,4 +97,17 @@ test("未知 finish_reason 映射為 unknown", () => {
 
 test("usage token 數僅接受安全非負整數", () => {
   assert.deepEqual(extractUsage({ usage: { prompt_tokens: 123, completion_tokens: -1 } }), { promptTokens: 123, completionTokens: null });
+});
+
+test("reasoning_content string 只回傳存在與長度", () => {
+  const marker = "private-reasoning-text";
+  assert.deepEqual(extractReasoningDiagnostics({ choices: [{ message: { reasoning_content: marker } }] }), { present: true, length: marker.length });
+});
+
+test("reasoning array 只回傳安全總長度", () => {
+  assert.deepEqual(extractReasoningDiagnostics({ choices: [{ message: { reasoning: ["前", { text: "後" }] } }] }), { present: true, length: 2 });
+});
+
+test("未知 reasoning 型別不洩漏內容", () => {
+  assert.deepEqual(extractReasoningDiagnostics({ choices: [{ message: { reasoning: { private: "value" } } }] }), { present: true, length: null });
 });

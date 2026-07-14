@@ -3,6 +3,7 @@ export const DEFAULT_MAX_RETRIES = 1;
 export const DEFAULT_MAX_OUTPUT_TOKENS = 1_800;
 export const DEFAULT_RESPONSE_FORMAT_MODE = "prompt" as const;
 export const DEFAULT_TOTAL_BUDGET_MS = 45_000;
+export const DEFAULT_THINKING_MODE = "provider_default" as const;
 
 function boundedInteger(value: string | undefined, fallback: number, min: number, max: number) {
   const parsed = Number(value);
@@ -12,6 +13,11 @@ function boundedInteger(value: string | undefined, fallback: number, min: number
 
 function responseFormatMode(value: string | undefined) {
   return value === "json_object" ? "json_object" : DEFAULT_RESPONSE_FORMAT_MODE;
+}
+
+function thinkingMode(value: string | undefined) {
+  if (value === "off" || value === "on") return value;
+  return DEFAULT_THINKING_MODE;
 }
 
 export function remoteConfig() {
@@ -24,6 +30,7 @@ export function remoteConfig() {
     maxOutputTokens: boundedInteger(process.env.AI_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS, 800, 4_000),
     responseFormatMode: responseFormatMode(process.env.AI_RESPONSE_FORMAT_MODE),
     totalBudgetMs: boundedInteger(process.env.AI_TOTAL_BUDGET_MS, DEFAULT_TOTAL_BUDGET_MS, 15_000, 55_000),
+    thinkingMode: thinkingMode(process.env.AI_THINKING_MODE),
   };
 }
 
@@ -53,5 +60,6 @@ export function publicRemoteConfig() {
     maxOutputTokens: config.maxOutputTokens,
     responseFormatMode: config.responseFormatMode,
     totalBudgetMs: config.totalBudgetMs,
+    thinkingMode: config.thinkingMode,
   };
 }

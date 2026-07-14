@@ -212,6 +212,7 @@ function ReportContent() {
         {data.remoteContentLength !== null && data.remoteContentLength !== undefined && <span>Content：{data.remoteContentLength} 字符</span>}
         {data.remotePromptTokens !== null && data.remotePromptTokens !== undefined && <span>Prompt tokens：{data.remotePromptTokens}</span>}
         {data.remoteCompletionTokens !== null && data.remoteCompletionTokens !== undefined && <span>Completion tokens：{data.remoteCompletionTokens}</span>}
+        {data.remoteReasoningPresent && <span>Thinking：已产生{data.remoteReasoningLength !== null && data.remoteReasoningLength !== undefined ? `（${data.remoteReasoningLength} 字符）` : ""}</span>}
         {data.fallbackReason && <span>Fallback：{data.fallbackReason}</span>}
       </section>
 

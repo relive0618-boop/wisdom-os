@@ -61,6 +61,8 @@ export async function POST(request: Request) {
           providerJsonExtraction: "not_attempted" as const,
           providerPromptTokens: null,
           providerCompletionTokens: null,
+          providerReasoningPresent: false,
+          providerReasoningLength: null,
         };
     const report = remote.report ?? ReportSchema.parse({
       ...buildLocalReport(input.data, retrieved),
@@ -95,6 +97,8 @@ export async function POST(request: Request) {
       remoteJsonExtraction: remote.providerJsonExtraction,
       remotePromptTokens: remote.providerPromptTokens,
       remoteCompletionTokens: remote.providerCompletionTokens,
+      remoteReasoningPresent: remote.providerReasoningPresent,
+      remoteReasoningLength: remote.providerReasoningLength,
     });
     return NextResponse.json(response);
   } catch {

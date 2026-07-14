@@ -14,6 +14,8 @@ export interface ProviderDiagnostics {
   providerJsonExtraction: ProviderJsonExtraction;
   providerPromptTokens: number | null;
   providerCompletionTokens: number | null;
+  providerReasoningPresent: boolean;
+  providerReasoningLength: number | null;
 }
 
 export function emptyProviderDiagnostics(): ProviderDiagnostics {
@@ -26,6 +28,8 @@ export function emptyProviderDiagnostics(): ProviderDiagnostics {
     providerJsonExtraction: "not_attempted",
     providerPromptTokens: null,
     providerCompletionTokens: null,
+    providerReasoningPresent: false,
+    providerReasoningLength: null,
   };
 }
 

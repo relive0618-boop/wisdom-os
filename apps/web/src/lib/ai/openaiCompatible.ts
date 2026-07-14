@@ -49,6 +49,8 @@ function diagnosticsOf(result: ProviderResult): ProviderDiagnostics {
     providerJsonExtraction: result.providerJsonExtraction,
     providerPromptTokens: result.providerPromptTokens,
     providerCompletionTokens: result.providerCompletionTokens,
+    providerReasoningPresent: result.providerReasoningPresent,
+    providerReasoningLength: result.providerReasoningLength,
   };
 }
 
@@ -123,6 +125,9 @@ export class OpenAiCompatibleProvider implements AiProvider {
           ],
         };
         if (config.responseFormatMode === "json_object") requestBody.response_format = { type: "json_object" };
+        if (config.thinkingMode !== "provider_default") {
+          requestBody.chat_template_kwargs = { enable_thinking: config.thinkingMode === "on" };
+        }
         const response = await fetch(config.baseUrl as string, {
           method: "POST",
           headers: {

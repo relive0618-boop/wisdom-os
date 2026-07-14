@@ -66,6 +66,7 @@ function clear() {
   delete process.env.AI_MAX_OUTPUT_TOKENS;
   delete process.env.AI_RESPONSE_FORMAT_MODE;
   delete process.env.AI_TOTAL_BUDGET_MS;
+  delete process.env.AI_THINKING_MODE;
 }
 
 test("analysisMode 預設 auto", () => assert.equal(AnalyzeInputSchema.parse({ question: "問題" }).analysisMode, "auto"));
@@ -134,6 +135,39 @@ test("遠端請求固定 stream=false", async () => {
   await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
   globalThis.fetch = original; clear();
   assert.equal(body.stream, false);
+});
+
+test("provider_default 不傳 chat_template_kwargs", async () => {
+  configure();
+  const original = globalThis.fetch; let body: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => { body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(report()) } }] }), { status: 200 }); };
+  await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  globalThis.fetch = original; clear();
+  assert.equal("chat_template_kwargs" in body, false);
+});
+
+test("thinking off 傳 enable_thinking=false", async () => {
+  configure(); process.env.AI_THINKING_MODE = "off";
+  const original = globalThis.fetch; let body: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => { body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(report()) } }] }), { status: 200 }); };
+  await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  globalThis.fetch = original; clear();
+  assert.deepEqual(body.chat_template_kwargs, { enable_thinking: false });
+});
+
+test("thinking on 傳 enable_thinking=true", async () => {
+  configure(); process.env.AI_THINKING_MODE = "on";
+  const original = globalThis.fetch; let body: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => { body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(report()) } }] }), { status: 200 }); };
+  await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  globalThis.fetch = original; clear();
+  assert.deepEqual(body.chat_template_kwargs, { enable_thinking: true });
+});
+
+test("無效 thinking mode 回退 provider_default", () => {
+  process.env.AI_THINKING_MODE = "unsupported";
+  assert.equal(remoteConfig().thinkingMode, "provider_default");
+  clear();
 });
 
 test("壓縮 prompt 不包含完整案例 JSON", () => {
@@ -215,7 +249,7 @@ test("舊報告可讀取新增遠端欄位預設值", () => {
 
 test("舊 StoredReport 可讀取安全診斷欄位預設值", () => {
   const stored = AnalyzeResponseSchema.parse({ decisionId: "d", reportId: "r", cycleId: "c", report: { ...report(), mode: "local", decisionId: "d", reportId: "r" }, retrievedAt: new Date().toISOString() });
-  assert.equal(stored.remotePayloadParsed, false); assert.equal(stored.remoteContentLength, null); assert.equal(stored.remoteJsonExtraction, "not_attempted");
+  assert.equal(stored.remotePayloadParsed, false); assert.equal(stored.remoteContentLength, null); assert.equal(stored.remoteJsonExtraction, "not_attempted"); assert.equal(stored.remoteReasoningPresent, false); assert.equal(stored.remoteReasoningLength, null);
 });
 
 test("Analyze API response 不包含 Provider raw content", async () => {
@@ -240,8 +274,35 @@ test("Analyze API response 不包含 Provider payload", async () => {
   assert.equal(response.status, 200); assert.equal(JSON.stringify(payload).includes(rawPayloadMarker), false);
 });
 
+test("Analyze API response 不包含 reasoning 原文", async () => {
+  configure(); resetRateLimit();
+  const original = globalThis.fetch;
+  const rawReasoningMarker = "reasoning-must-not-leave-server";
+  globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(report()), reasoning_content: rawReasoningMarker } }] }), { status: 200 });
+  const response = await analyzePOST(new Request("http://localhost/api/analyze", { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": "reasoning-test" }, body: JSON.stringify({ ...input, analysisMode: "remote" }) }));
+  const payload = await response.json();
+  globalThis.fetch = original; clear(); resetRateLimit();
+  assert.equal(response.status, 200); assert.equal(payload.remoteReasoningPresent, true); assert.equal(JSON.stringify(payload).includes(rawReasoningMarker), false);
+});
+
+test("reasoning_content 不會被當成最終 report", async () => {
+  configure();
+  const original = globalThis.fetch;
+  const reasoningReport = JSON.stringify(report());
+  globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: "", reasoning_content: reasoningReport } }] }), { status: 200 });
+  const result = await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  globalThis.fetch = original; clear();
+  assert.equal(result.report, null); assert.equal(result.errorCode, "REMOTE_INVALID_JSON"); assert.equal(result.providerReasoningPresent, true); assert.equal(result.providerReasoningLength, reasoningReport.length);
+});
+
 test("health 顯示安全相容設定", async () => {
   configure(); process.env.AI_MAX_OUTPUT_TOKENS = "2200"; process.env.AI_RESPONSE_FORMAT_MODE = "json_object"; process.env.AI_TOTAL_BUDGET_MS = "30000";
   const payload = await (await healthGET()).json(); clear();
   assert.equal(payload.remote.maxOutputTokens, 2200); assert.equal(payload.remote.responseFormatMode, "json_object"); assert.equal(payload.remote.totalBudgetMs, 30000); assert.equal(JSON.stringify(payload).includes("test-key"), false);
+});
+
+test("health 顯示 thinkingMode", async () => {
+  configure(); process.env.AI_THINKING_MODE = "off";
+  const payload = await (await healthGET()).json(); clear();
+  assert.equal(payload.remote.thinkingMode, "off"); assert.equal(JSON.stringify(payload).includes("test-key"), false);
 });

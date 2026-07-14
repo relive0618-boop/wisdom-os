@@ -69,6 +69,33 @@ export function extractUsage(payload: unknown) {
   };
 }
 
+function safeReasoningLength(value: unknown): number | null {
+  if (typeof value === "string") return value.length;
+  if (!Array.isArray(value)) return null;
+  let length = 0;
+  for (const item of value) {
+    if (typeof item === "string") {
+      length += item.length;
+      continue;
+    }
+    if (isRecord(item) && typeof item.text === "string") {
+      length += item.text.length;
+      continue;
+    }
+    return null;
+  }
+  return length;
+}
+
+export function extractReasoningDiagnostics(payload: unknown) {
+  const selected = choice(payload);
+  const message = selected && isRecord(selected.message) ? selected.message : null;
+  const values = [message?.reasoning_content, message?.reasoning].filter((value) => value !== undefined && value !== null);
+  if (!values.length) return { present: false, length: null };
+  const lengths = values.map(safeReasoningLength);
+  return { present: true, length: lengths.every((length) => length !== null) ? lengths.reduce((total, length) => total + (length as number), 0) : null };
+}
+
 function parseObject(text: string): JsonObject | null {
   try {
     const value: unknown = JSON.parse(text);
@@ -130,6 +157,7 @@ export function extractJsonObject(content: string): JsonObjectResult {
 export function payloadDiagnostics(payload: unknown): ProviderDiagnostics {
   const assistant = extractAssistantText(payload);
   const usage = extractUsage(payload);
+  const reasoning = extractReasoningDiagnostics(payload);
   return {
     providerPayloadParsed: true,
     providerContentPresent: assistant.present,
@@ -139,5 +167,7 @@ export function payloadDiagnostics(payload: unknown): ProviderDiagnostics {
     providerJsonExtraction: "not_attempted",
     providerPromptTokens: usage.promptTokens,
     providerCompletionTokens: usage.completionTokens,
+    providerReasoningPresent: reasoning.present,
+    providerReasoningLength: reasoning.length,
   };
 }
