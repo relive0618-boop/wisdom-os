@@ -17,6 +17,9 @@ export interface ProviderResult {
   quality: ReportQuality;
   attempted: boolean;
   succeeded: boolean;
+  latencyMs: number;
+  attempts: number;
+  repaired: boolean;
 }
 
 export interface AiProvider {

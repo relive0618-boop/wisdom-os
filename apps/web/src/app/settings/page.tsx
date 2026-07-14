@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 export default function SettingsPage() {
   const [theme, setTheme] = useState("light");
   const [stats, setStats] = useState({ cycles: 0, reviews: 0, itemsDone: 0 });
-  const [remote, setRemote] = useState({ configured: false, apiKeyConfigured: false, provider: null as string | null, safeBaseUrl: null as string | null, model: null as string | null, timeoutMs: 25000, maxRetries: 1, defaultMode: "auto" });
+  const [remote, setRemote] = useState({ configured: false, apiKeyConfigured: false, provider: null as string | null, safeBaseUrl: null as string | null, model: null as string | null, timeoutMs: 25000, maxRetries: 1, maxOutputTokens: 1800, responseFormatMode: "prompt" as "prompt" | "json_object", totalBudgetMs: 45000, defaultMode: "auto" });
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -85,7 +85,7 @@ export default function SettingsPage() {
           </div>
 
           <div className="mt-4 flex flex-wrap gap-1.5">
-            {["AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_TIMEOUT_MS", "AI_MAX_RETRIES"].map((v) => (
+            {["AI_BASE_URL", "AI_API_KEY", "AI_MODEL", "AI_TIMEOUT_MS", "AI_MAX_RETRIES", "AI_MAX_OUTPUT_TOKENS", "AI_RESPONSE_FORMAT_MODE", "AI_TOTAL_BUDGET_MS"].map((v) => (
               <code key={v} className="rounded-lg bg-[#eee9df] px-2 py-1 text-[10px] text-[#77786f]">
                 {v}
               </code>
@@ -97,6 +97,9 @@ export default function SettingsPage() {
             <div>Model：{remote.model || "未配置"}</div>
             <div>Timeout：{remote.timeoutMs / 1000} 秒</div>
             <div>Max retries：{remote.maxRetries}</div>
+            <div>Max output tokens：{remote.maxOutputTokens}</div>
+            <div>JSON mode：{remote.responseFormatMode}</div>
+            <div>Total budget：{remote.totalBudgetMs / 1000} 秒</div>
             <div>API Key：{remote.apiKeyConfigured ? "已設定" : "未設定"}</div>
             <div>默认分析模式：{remote.defaultMode}</div>
           </div>

@@ -63,6 +63,9 @@ function clear() {
   delete process.env.AI_MODEL;
   delete process.env.AI_TIMEOUT_MS;
   delete process.env.AI_MAX_RETRIES;
+  delete process.env.AI_MAX_OUTPUT_TOKENS;
+  delete process.env.AI_RESPONSE_FORMAT_MODE;
+  delete process.env.AI_TOTAL_BUDGET_MS;
 }
 
 test("analysisMode 預設 auto", () => assert.equal(AnalyzeInputSchema.parse({ question: "問題" }).analysisMode, "auto"));
@@ -91,3 +94,127 @@ test("ai.ts 只保留相容 re-export", () => { assert.equal(readFileSync(new UR
 test("health 不回傳 API Key", async () => { process.env.AI_BASE_URL = "https://example.test/v1/chat/completions"; process.env.AI_API_KEY = "health-secret-key"; process.env.AI_MODEL = "test-model"; const payload = await (await healthGET()).json(); clear(); assert.equal(JSON.stringify(payload).includes("health-secret-key"), false); });
 test("health 不回傳 URL query、帳號密碼或 fragment", async () => { process.env.AI_BASE_URL = "https://user:password@example.test/v1/chat/completions?api_key=url-secret#fragment"; process.env.AI_API_KEY = "test-key"; process.env.AI_MODEL = "test-model"; const payload = await (await healthGET()).json(); clear(); assert.equal(payload.remote.safeBaseUrl, "https://example.test/v1/chat/completions"); assert.equal(JSON.stringify(payload).includes("url-secret"), false); assert.equal(JSON.stringify(payload).includes("password"), false); assert.equal(JSON.stringify(payload).includes("fragment"), false); });
 test("README 案例數為 30", () => { assert.match(readFileSync(new URL("../../../../README.md", import.meta.url), "utf8"), /现代案例.*30 个情境化综合案例/); });
+
+test("prompt 模式不傳 response_format", async () => {
+  configure();
+  const original = globalThis.fetch;
+  let body: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => { body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(report()) } }] }), { status: 200 }); };
+  const result = await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  globalThis.fetch = original; clear();
+  assert.equal(result.errorCode, null);
+  assert.equal("response_format" in body, false);
+});
+
+test("json_object 模式才傳 response_format", async () => {
+  configure(); process.env.AI_RESPONSE_FORMAT_MODE = "json_object";
+  const original = globalThis.fetch;
+  let body: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => { body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(report()) } }] }), { status: 200 }); };
+  await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  globalThis.fetch = original; clear();
+  assert.deepEqual(body.response_format, { type: "json_object" });
+});
+
+test("預設傳 max_tokens=1800", async () => {
+  configure();
+  const original = globalThis.fetch;
+  let body: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => { body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(report()) } }] }), { status: 200 }); };
+  await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  globalThis.fetch = original; clear();
+  assert.equal(body.max_tokens, 1800);
+});
+
+test("遠端請求固定 stream=false", async () => {
+  configure();
+  const original = globalThis.fetch;
+  let body: Record<string, unknown> = {};
+  globalThis.fetch = async (_url, init) => { body = JSON.parse(String(init?.body)); return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(report()) } }] }), { status: 200 }); };
+  await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  globalThis.fetch = original; clear();
+  assert.equal(body.stream, false);
+});
+
+test("壓縮 prompt 不包含完整案例 JSON", () => {
+  const prompt = engine.buildPrompt(input, retrieved);
+  assert.equal(prompt.includes(retrieved.cases[0].scenario), false);
+  assert.equal(prompt.includes("case_type"), false);
+});
+
+test("壓縮 prompt 最多包含三條 knowledge", () => {
+  const prompt = engine.buildPrompt(input, retrieved);
+  assert.equal(retrieved.knowledge.filter((item: { id: string }) => prompt.includes(`id=${item.id}`)).length, 3);
+});
+
+test("壓縮 prompt 不使用漂亮縮排 JSON", () => {
+  const prompt = engine.buildPrompt(input, retrieved);
+  assert.equal(prompt.includes("{\n  \""), false);
+});
+
+test("timeout 不重試", async () => {
+  configure(); process.env.AI_MAX_RETRIES = "1";
+  const original = globalThis.fetch; let calls = 0;
+  globalThis.fetch = async () => { calls += 1; const error = new Error("timeout"); error.name = "TimeoutError"; throw error; };
+  const result = await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  globalThis.fetch = original; clear();
+  assert.equal(result.errorCode, "REMOTE_TIMEOUT"); assert.equal(calls, 1); assert.equal(result.attempts, 1);
+});
+
+test("HTTP 429 會重試一次", async () => {
+  configure(); process.env.AI_MAX_RETRIES = "1";
+  const original = globalThis.fetch; let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return calls === 1 ? new Response("", { status: 429 }) : new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(report()) } }] }), { status: 200 }); };
+  const result = await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  globalThis.fetch = original; clear();
+  assert.equal(result.errorCode, null); assert.equal(calls, 2); assert.equal(result.attempts, 2);
+});
+
+test("HTTP 503 會重試一次", async () => {
+  configure(); process.env.AI_MAX_RETRIES = "1";
+  const original = globalThis.fetch; let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return calls === 1 ? new Response("", { status: 503 }) : new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(report()) } }] }), { status: 200 }); };
+  const result = await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  globalThis.fetch = original; clear();
+  assert.equal(result.errorCode, null); assert.equal(calls, 2); assert.equal(result.attempts, 2);
+});
+
+test("HTTP 401 不重試", async () => {
+  configure(); process.env.AI_MAX_RETRIES = "1";
+  const original = globalThis.fetch; let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return new Response("", { status: 401 }); };
+  const result = await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  globalThis.fetch = original; clear();
+  assert.equal(result.errorCode, "REMOTE_HTTP_ERROR"); assert.equal(calls, 1); assert.equal(result.attempts, 1);
+});
+
+test("總預算不足時不執行品質修復", async () => {
+  configure(); process.env.AI_TOTAL_BUDGET_MS = "15000";
+  const originalFetch = globalThis.fetch; const originalNow = Date.now; let calls = 0; let now = 0;
+  Date.now = () => now;
+  const incomplete = { ...report(), strategies: report().strategies.slice(0, 2) };
+  globalThis.fetch = async () => { calls += 1; now = 6000; return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(incomplete) } }] }), { status: 200 }); };
+  const result = await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  globalThis.fetch = originalFetch; Date.now = originalNow; clear();
+  assert.equal(result.errorCode, "REMOTE_QUALITY_FAILED"); assert.equal(calls, 1); assert.equal(result.repaired, false);
+});
+
+test("latencyMs 與 attempts 僅回傳安全數值", async () => {
+  configure();
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(report()) } }] }), { status: 200 });
+  const result = await requestRemoteReport(retrieved, "prompt", crypto.randomUUID(), crypto.randomUUID(), input);
+  globalThis.fetch = original; clear();
+  assert.equal(typeof result.latencyMs, "number"); assert.equal(result.attempts, 1); assert.equal(JSON.stringify(result).includes("test-key"), false);
+});
+
+test("舊報告可讀取新增遠端欄位預設值", () => {
+  const parsed = AnalyzeResponseSchema.parse({ decisionId: "d", reportId: "r", cycleId: "c", report: { ...report(), mode: "local", decisionId: "d", reportId: "r" }, retrievedAt: new Date().toISOString() });
+  assert.equal(parsed.remoteLatencyMs, null); assert.equal(parsed.remoteAttempts, 0); assert.equal(parsed.remoteRepaired, false);
+});
+
+test("health 顯示安全相容設定", async () => {
+  configure(); process.env.AI_MAX_OUTPUT_TOKENS = "2200"; process.env.AI_RESPONSE_FORMAT_MODE = "json_object"; process.env.AI_TOTAL_BUDGET_MS = "30000";
+  const payload = await (await healthGET()).json(); clear();
+  assert.equal(payload.remote.maxOutputTokens, 2200); assert.equal(payload.remote.responseFormatMode, "json_object"); assert.equal(payload.remote.totalBudgetMs, 30000); assert.equal(JSON.stringify(payload).includes("test-key"), false);
+});

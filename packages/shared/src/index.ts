@@ -137,6 +137,9 @@ export const AnalyzeResponseSchema = z.object({
   ]).nullable().default(null),
   remoteAttempted: z.boolean().default(false),
   remoteSucceeded: z.boolean().default(false),
+  remoteLatencyMs: z.number().int().nonnegative().nullable().optional().default(null),
+  remoteAttempts: z.number().int().nonnegative().optional().default(0),
+  remoteRepaired: z.boolean().optional().default(false),
 });
 
 export type AnalyzeResponse = z.infer<typeof AnalyzeResponseSchema>;
@@ -160,6 +163,9 @@ export const HealthResponseSchema = z.object({
     model: z.string().nullable(),
     timeoutMs: z.number().int().positive(),
     maxRetries: z.number().int().min(0).max(1),
+    maxOutputTokens: z.number().int().min(800).max(4000),
+    responseFormatMode: z.enum(["prompt", "json_object"]),
+    totalBudgetMs: z.number().int().min(15000).max(55000),
   }),
   mode: z.enum(["local", "remote"]),
   defaultMode: z.enum(["auto", "local", "remote"]),

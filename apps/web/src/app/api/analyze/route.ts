@@ -50,6 +50,9 @@ export async function POST(request: Request) {
           quality: { qualityScore: 100, qualityWarnings: [], qualityPassed: true },
           attempted: false,
           succeeded: false,
+          latencyMs: 0,
+          attempts: 0,
+          repaired: false,
         };
     const report = remote.report ?? ReportSchema.parse({
       ...buildLocalReport(input.data, retrieved),
@@ -73,6 +76,9 @@ export async function POST(request: Request) {
       fallbackReason: remote.report ? null : remote.errorCode,
       remoteAttempted: remote.attempted,
       remoteSucceeded: remote.succeeded,
+      remoteLatencyMs: remote.attempted ? remote.latencyMs : null,
+      remoteAttempts: remote.attempts,
+      remoteRepaired: remote.repaired,
     });
     return NextResponse.json(response);
   } catch {
