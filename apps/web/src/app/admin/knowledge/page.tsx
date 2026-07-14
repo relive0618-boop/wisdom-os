@@ -1,0 +1,1 @@
+import { AdminLayout } from "@/components/admin/AdminLayout"; import { ContentManager } from "@/components/admin/ContentManager"; export default function Page() { return <AdminLayout title="知識管理"><ContentManager kind="knowledge" /></AdminLayout>; }

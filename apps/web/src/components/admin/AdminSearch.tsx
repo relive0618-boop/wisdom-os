@@ -1,0 +1,1 @@
+"use client"; export function AdminSearch({ value, onChange }: { value: string; onChange: (value: string) => void }) { return <input aria-label="搜尋" value={value} onChange={(event) => onChange(event.target.value)} placeholder="搜尋 id、標題、章節或標籤" className="rounded-lg border p-2" />; }

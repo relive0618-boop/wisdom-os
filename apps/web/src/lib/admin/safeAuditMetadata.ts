@@ -1,0 +1,2 @@
+const allowed = ["changedFields", "previousStatus", "nextStatus", "version", "duplicatedFrom", "conflictResolution", "itemCount"] as const;
+export function safeAuditMetadata(value: unknown) { if (!value || typeof value !== "object" || Array.isArray(value)) return {}; const record = value as Record<string, unknown>; return Object.fromEntries(allowed.flatMap((key) => key in record ? [[key, record[key]]] : [])); }

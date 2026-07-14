@@ -9,7 +9,8 @@
     "test": "pnpm -r test",
     "test:e2e": "pnpm --filter web test:e2e",
     "typecheck": "pnpm -r typecheck",
-    "preinstall": "npx only-allow pnpm"
+    "preinstall": "npx only-allow pnpm",
+    "seed:supabase": "pnpm --filter web exec tsx ../../scripts/seed-supabase-content.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

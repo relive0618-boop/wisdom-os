@@ -1,0 +1,2 @@
+"use client"; import type { ContentStatus } from "@/lib/admin/contentTransitions"; import { contentStatuses, canTransition } from "@/lib/admin/contentTransitions";
+export function StatusActions({ status, onSelect }: { status: ContentStatus; onSelect: (status: ContentStatus) => void }) { return <div className="flex gap-2">{contentStatuses.filter((next) => canTransition(status, next)).map((next) => <button className="rounded border px-2 py-1 text-xs" key={next} onClick={() => onSelect(next)}>→ {next}</button>)}</div>; }

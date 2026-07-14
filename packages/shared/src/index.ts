@@ -190,6 +190,10 @@ export const HealthResponseSchema = z.object({
     totalBudgetMs: z.number().int().min(15000).max(55000),
     thinkingMode: z.enum(["provider_default", "off", "on"]),
   }),
+  cloud: z.object({
+    configured: z.boolean(), authEnabled: z.boolean(), syncEnabled: z.boolean(), adminEnabled: z.boolean(),
+    persistentRateLimitEnabled: z.boolean(), rateLimitBackend: z.enum(["memory", "supabase"]), databaseReachable: z.boolean().nullable(),
+  }).optional(),
   mode: z.enum(["local", "remote"]),
   defaultMode: z.enum(["auto", "local", "remote"]),
 });
@@ -238,3 +242,100 @@ export const PdcaCycleSchema = z.object({
 export type PdcaItem = z.infer<typeof PdcaItemSchema>;
 export type PdcaCheckin = z.infer<typeof PdcaCheckinSchema>;
 export type PdcaCycle = z.infer<typeof PdcaCycleSchema>;
+
+// ─── Cloud sync ──────────────────────────────────────────────────────────
+
+export const CloudErrorCodeSchema = z.enum([
+  "CLOUD_NOT_CONFIGURED",
+  "AUTH_REQUIRED",
+  "CLOUD_FORBIDDEN",
+  "CLOUD_INVALID_INPUT",
+  "CLOUD_NOT_FOUND",
+  "CLOUD_CONFLICT",
+  "CLOUD_RATE_LIMITED",
+  "CLOUD_TEMPORARILY_UNAVAILABLE",
+  "CLOUD_INTERNAL_ERROR",
+]);
+export type CloudErrorCode = z.infer<typeof CloudErrorCodeSchema>;
+
+export const CloudEntityMetadataSchema = z.object({
+  revision: z.number().int().positive(),
+  deviceId: z.string().max(200).nullable(),
+  clientUpdatedAt: z.string().datetime().nullable(),
+  updatedAt: z.string().datetime(),
+  deletedAt: z.string().datetime().nullable(),
+});
+
+export const CloudReportSchema = CloudEntityMetadataSchema.extend({
+  reportId: z.string().min(1),
+  decisionId: z.string().min(1),
+  title: z.string().max(80).nullable(),
+  category: z.string().max(80).nullable(),
+  payload: AnalyzeResponseSchema,
+});
+export type CloudReport = z.infer<typeof CloudReportSchema>;
+
+export const CloudPdcaCycleSchema = CloudEntityMetadataSchema.extend({
+  cycleId: z.string().min(1),
+  reportId: z.string().min(1),
+  payload: PdcaCycleSchema,
+});
+export type CloudPdcaCycle = z.infer<typeof CloudPdcaCycleSchema>;
+
+export const CloudMutationSchema = z.object({
+  payload: z.unknown().refine((value) => value !== undefined, "payload is required"),
+  expectedRevision: z.number().int().positive().nullable().optional(),
+  deviceId: z.string().trim().min(1).max(200).nullable().optional(),
+  clientUpdatedAt: z.string().datetime().nullable().optional(),
+});
+
+export const SyncEntitySchema = z.object({
+  entityType: z.enum(["report", "pdca"]),
+  entityId: z.string().min(1),
+  payload: z.unknown(),
+  revision: z.number().int().positive().nullable().optional(),
+  updatedAt: z.string().datetime().nullable().optional(),
+  deletedAt: z.string().datetime().nullable().optional(),
+  deviceId: z.string().max(200).nullable().optional(),
+  hash: z.string().regex(/^[a-f0-9]{64}$/),
+});
+export type SyncEntity = z.infer<typeof SyncEntitySchema>;
+
+export const SyncStateSchema = z.enum(["local_only", "pending_upload", "pending_download", "syncing", "synced", "conflict", "offline", "error"]);
+export const PendingOperationSchema = z.enum(["create", "update", "delete", "none"]);
+export const SyncMetadataSchema = z.object({
+  entityId: z.string().min(1),
+  localUpdatedAt: z.string().datetime(),
+  cloudRevision: z.number().int().positive().nullable(),
+  lastSyncedHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+  lastSyncedAt: z.string().datetime().nullable(),
+  syncState: SyncStateSchema,
+  source: z.enum(["local", "cloud", "both"]),
+  pendingOperation: PendingOperationSchema,
+  duplicatedFrom: z.string().min(1).nullable().optional(),
+  localBackupAt: z.string().datetime().nullable().optional(),
+});
+export type SyncMetadata = z.infer<typeof SyncMetadataSchema>;
+
+export const SyncPushRequestSchema = z.object({
+  deviceId: z.string().trim().min(1).max(200),
+  entities: z.array(SyncEntitySchema).max(25),
+});
+
+export const SyncResolutionSchema = z.object({
+  entityType: z.enum(["report", "pdca"]),
+  entityId: z.string().min(1),
+  strategy: z.enum(["local", "cloud", "both"]),
+  local: SyncEntitySchema.optional(),
+  cloudRevision: z.number().int().positive().nullable().optional(),
+});
+
+export const CloudHealthSchema = z.object({
+  configured: z.boolean(),
+  authEnabled: z.boolean(),
+  syncEnabled: z.boolean(),
+  adminEnabled: z.boolean(),
+  persistentRateLimitEnabled: z.boolean(),
+  rateLimitBackend: z.enum(["memory", "supabase"]),
+  databaseReachable: z.boolean().nullable(),
+});

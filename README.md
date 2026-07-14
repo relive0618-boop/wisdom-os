@@ -8,7 +8,8 @@
 - **知识库** — 56 条孙子兵法原则，附原文、白话解释、适用边界与风险提示
 - **现代案例** — 30 个情境化综合案例，帮助理解经典原则的现代应用
 - **PDCA 循环追踪** — 将策略报告转化为可执行的待办清单，支持状态跟踪、复盘记录与多轮改善循环
-- **决策历史** — 所有分析记录保存在本地，可随时回溯与继续追踪
+- **决策历史** — 本地优先保存，可选择同步到自己的云端帐户
+- **云端帐户与同步** — Supabase Auth、报告与 PDCA 的按需分批同步、冲突选择与离线保护
 
 ## 快速开始
 
@@ -110,7 +111,23 @@ pnpm test:e2e   # Playwright，使用 production-like next start
 3. 在 Preview 与 Production 环境分别设置 `AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL`、`AI_TIMEOUT_MS`、`AI_MAX_RETRIES`、`AI_MAX_OUTPUT_TOKENS`、`AI_RESPONSE_FORMAT_MODE`、`AI_TOTAL_BUDGET_MS`、`AI_THINKING_MODE`；不设置也可以零成本运行本地模式。
 4. 部署后访问 `/api/health`，确认 `remote.configured` 是否符合预期。
 
-报告和 PDCA 当前保存在浏览器本机；清除浏览器站点数据会删除这些记录。云端同步仍是后续 Supabase 计划。
+### 云端帐号与同步（v0.4）
+
+云端功能默认关闭，未配置时应用维持原有本地模式，不要求 API Key。启用时仅可公开的 Supabase URL 与 Publishable Key 使用 `NEXT_PUBLIC_` 前缀；`SUPABASE_SECRET_KEY` 与 `RATE_LIMIT_HASH_SECRET` 仅在服务器使用，绝不进入浏览器、localStorage 或 API 回应。
+
+```text
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+SUPABASE_SECRET_KEY=
+NEXT_PUBLIC_WISDOM_CLOUD_SYNC_ENABLED=false
+NEXT_PUBLIC_WISDOM_ADMIN_ENABLED=false
+WISDOM_PERSISTENT_RATE_LIMIT_ENABLED=false
+RATE_LIMIT_HASH_SECRET=
+```
+
+在 Supabase 先执行 `supabase/migrations/20260715_wisdom_os_v04.sql`，再以服务端凭据运行 `pnpm seed:supabase`。迁移会开启 RLS：用户只能访问自己的报告和 PDCA；公开内容只读取 `published`；管理员角色只取自 JWT `app_metadata.role`。同步永远由使用者在 `/sync` 明确开始，每批最多 25 笔，以 SHA-256 比对；发生冲突时选择本地、云端或两者，绝不自动删除本地数据。
+
+持久化 rate limit 是可选项：服务器先以 HMAC-SHA256 将 IP 匿名化后才传到数据库，数据库不保存原始 IP；数据库异常会安全降级为记忆体限流。详细作业说明见 `docs/`。
 
 ## 路线图
 
@@ -122,8 +139,8 @@ pnpm test:e2e   # Playwright，使用 production-like next start
 - [x] 决策历史 + 报告/PDCA 本地持久化
 - [x] OpenAI-compatible 远程 AI + 本地 fallback
 - [x] Zod 输入、输出与报告校验
-- [ ] Supabase 云同步
-- [ ] 管理后台（知识 CRUD + 审核流程）
+- [~] Supabase 云端帐号、RLS 迁移与选择性同步（程式与 mock 测试进行中；尚未连接真实 Supabase）
+- [~] 知识与案例管理的审核资料模型（Production feature flags 保持关闭）
 - [ ] 个人决策模型（偏好学习）
 - [ ] 多经典扩展（易经、鬼谷子...）
 - [ ] Stripe 商业化

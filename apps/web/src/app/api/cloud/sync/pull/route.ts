@@ -1,0 +1,3 @@
+import { cloudContext } from "@/lib/cloud/server";
+import { NextResponse } from "next/server";
+export async function POST() { const context = await cloudContext(); if ("error" in context) return context.error; const [reports, cycles] = await Promise.all([context.client.from("user_reports").select("*").order("updated_at", { ascending: false }), context.client.from("user_pdca_cycles").select("*").order("updated_at", { ascending: false })]); if (reports.error || cycles.error) return NextResponse.json({ error: { code: "CLOUD_TEMPORARILY_UNAVAILABLE" } }, { status: 503 }); return NextResponse.json({ reports: reports.data ?? [], cycles: cycles.data ?? [] }); }

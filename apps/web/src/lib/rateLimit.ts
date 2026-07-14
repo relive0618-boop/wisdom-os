@@ -24,3 +24,22 @@ export function checkRateLimit(key: string, now = Date.now()) {
 export function resetRateLimit() {
   buckets.clear();
 }
+
+export type RateLimitResult = ReturnType<typeof checkRateLimit> & { backend: "memory" | "supabase" };
+
+export async function checkRateLimitForRequest(ip: string, route = "/api/analyze"): Promise<RateLimitResult> {
+  const { supabaseConfig } = await import("@/lib/supabase/config");
+  const config = supabaseConfig();
+  const memory = () => ({ ...checkRateLimit(`${route}:${ip}`), backend: "memory" as const });
+  if (!config.flags.persistentRateLimitEnabled || !config.secretKey || !process.env.RATE_LIMIT_HASH_SECRET) return memory();
+  try {
+    const { createHmac } = await import("node:crypto");
+    const identifierHash = createHmac("sha256", process.env.RATE_LIMIT_HASH_SECRET).update(ip).digest("hex");
+    const { getAdminSupabaseClient } = await import("@/lib/supabase/admin");
+    const client = getAdminSupabaseClient(); if (!client) return memory();
+    const { data, error } = await client.rpc("consume_rate_limit", { identifier_hash_input: identifierHash, route_name: route, limit_count: MAX_REQUESTS, window_seconds: 60 });
+    const row = Array.isArray(data) ? data[0] : null;
+    if (error || !row || typeof row.allowed !== "boolean") return memory();
+    return { allowed: row.allowed, remaining: Number(row.remaining) || 0, resetAt: new Date(String(row.reset_at)).getTime(), backend: "supabase" };
+  } catch { return memory(); }
+}

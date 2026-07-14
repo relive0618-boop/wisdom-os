@@ -1,0 +1,4 @@
+import { redirect } from "next/navigation";
+import { AccountPanel } from "@/components/auth/AccountPanel";
+import { claimsUserId, getVerifiedClaims } from "@/lib/supabase/server";
+export default async function AccountPage() { const { claims } = await getVerifiedClaims(); if (!claimsUserId(claims)) redirect("/login?next=/account"); const profile = claims as { email?: unknown; user_metadata?: { display_name?: unknown } }; return <section className="mx-auto max-w-3xl p-6 md:p-12"><p className="text-xs text-[#77786f]">雲端帳號</p><h1 className="mt-2 font-serif text-3xl">帳號與同步</h1><p className="mt-4 text-sm text-[#77786f]">登入已驗證。你可以在同步頁選擇要上傳的本地資料；系統不會在登入後自動上傳或刪除本地資料。</p><AccountPanel email={typeof profile.email === "string" ? profile.email : ""} displayName={typeof profile.user_metadata?.display_name === "string" ? profile.user_metadata.display_name : ""} /></section>; }

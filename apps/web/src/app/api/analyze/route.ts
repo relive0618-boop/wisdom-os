@@ -4,7 +4,7 @@ import casesData from "@/lib/cases.json" with { type: "json" };
 import { createEngine } from "@/lib/engine.js";
 import { AnalyzeInputSchema, AnalyzeResponseSchema, ReportSchema } from "@wisdom/shared";
 import { requestRemoteReport } from "@/lib/ai";
-import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
+import { checkRateLimitForRequest, getClientIp } from "@/lib/rateLimit";
 
 const { retrieve, buildLocalReport, buildPrompt } = createEngine(knowledgeData, casesData);
 
@@ -13,7 +13,7 @@ function errorResponse(status: number, code: string, message: string) {
 }
 
 export async function POST(request: Request) {
-  const rate = checkRateLimit(getClientIp(request));
+  const rate = await checkRateLimitForRequest(getClientIp(request));
   if (!rate.allowed) return errorResponse(429, "RATE_LIMITED", "请求过于频繁，请稍后再试。");
 
   let rawBody: unknown;
