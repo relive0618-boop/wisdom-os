@@ -181,37 +181,31 @@ function createEngine(knowledge, cases) {
   }
 
   function buildPrompt(input, retrieved) {
-    return `你是"AI孙子兵法决策助手"。只能引用下方已审核知识，不得伪造原文，不得预测未来，不得使用绝对化结论。
-请输出严格 JSON，字段必须是：
-problem_summary, core_conflict, situation_assessment, citations, strategies, recommended_strategy, risks, action_plan_7d, review_questions, disclaimer。
-strategies 必须有3项，每项包含 name, position, actions, suitable_when, risk。
-用户问题：
-${JSON.stringify(input, null, 2)}
+    const compact = (value, max) => String(value || "").trim().slice(0, max);
+    const userContext = [
+      ["问题", compact(input.question, 800)],
+      ["标题", compact(input.title, 160)],
+      ["背景", compact(input.background, 500)],
+      ["目标", compact(input.goal, 300)],
+      ["资源", compact(input.resources, 400)],
+      ["限制", compact(input.constraints, 400)],
+      ["风险", compact(input.risks, 400)],
+      ["期限", compact(input.deadline, 80)],
+    ].filter(([, value]) => value).map(([label, value]) => `${label}：${value}`).join("\n");
+    const knowledgeContext = retrieved.knowledge.slice(0, 3).map((item) => (
+      `id=${item.id}\nchapter=${item.chapter}\ntitle=${item.title}\nsource=${item.source}\nprinciple=${compact(item.principle, 420)}\nlimits=${item.limits.map((limit) => compact(limit, 160)).join("；")}`
+    )).join("\n---\n");
 
-已审核知识：
-${JSON.stringify(
-  retrieved.knowledge.map((x) => ({
-    id: x.id,
-    chapter: x.chapter,
-    title: x.title,
-    source: x.source,
-    plain: x.plain,
-    principle: x.principle,
-    limits: x.limits,
-  })),
-  null,
-  2
-)}
-
-相关案例：
-${JSON.stringify(retrieved.cases, null, 2)}
-
-要求：
-1. 至少引用2条已审核知识。
-2. citations 中的 source 必须逐字来自已审核知识。
-3. 至少列出3项风险与5项七日行动。
-4. 明确适用边界。
-5. 只输出 JSON。`;
+    return `你是决策分析助手。只能引用下方已审核知识；不得伪造原文、不得预测未来、不得使用绝对化结论。
+用户资料：
+${userContext}
+已审核知识（仅可引用这些条目）：
+${knowledgeContext}
+只输出 JSON：单一 object，不得输出 Markdown code fence、思考过程或额外说明。字段必须为：problem_summary,core_conflict,situation_assessment,citations,strategies,recommended_strategy,risks,action_plan_7d,review_questions,disclaimer。
+decisionId、reportId、mode、category、case_refs 由服务器自动加入，不得输出。
+citations 至少2条；每条含 id,chapter,title,source,explanation，且 chapter、title、source 必须与上方条目逐字一致。
+strategies 正好3项；每项含 name,position,actions,suitable_when,risk；position 最多100个中文字；actions 正好3条且每条最多80个中文字。
+problem_summary 最多120个中文字；core_conflict 最多160个中文字；situation_assessment 最多260个中文字；recommended_strategy 最多180个中文字并说明理由；risks 为3到5条且每条最多100个中文字；action_plan_7d 正好7条；review_questions 为3到5条；disclaimer 最多100个中文字。`;
   }
 
   return { retrieve, buildLocalReport, validateReport, buildPrompt };

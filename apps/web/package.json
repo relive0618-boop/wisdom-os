@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/*.test.ts src/lib/*.test.js"
+    "test": "tsx --test src/lib/*.test.ts src/lib/*.test.js",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@wisdom/shared": "workspace:*",
@@ -19,6 +20,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

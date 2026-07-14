@@ -6,7 +6,7 @@
 
 - **决策分析** — 输入你的现实问题，系统检索相关知识，生成三种策略方案（稳健/平衡/进取）
 - **知识库** — 56 条孙子兵法原则，附原文、白话解释、适用边界与风险提示
-- **现代案例** — 15 个对照案例，帮助理解经典原则的现代应用
+- **现代案例** — 30 个情境化综合案例，帮助理解经典原则的现代应用
 - **PDCA 循环追踪** — 将策略报告转化为可执行的待办清单，支持状态跟踪、复盘记录与多轮改善循环
 - **决策历史** — 所有分析记录保存在本地，可随时回溯与继续追踪
 
@@ -45,12 +45,19 @@ wisdom-os/
 当前使用本地知识引擎（`lib/engine.js`）进行规则检索与策略生成，无需任何 API Key。
 通过服务器环境变量配置 OpenAI-compatible API 后可启用远程 AI 模式。API 会用 Zod 验证输入、远程输出和最终报告；远程请求失败时自动回退本地引擎。
 
-### 双模式设计
+### 三种分析模式
 
 | 模式 | 适用场景 | API 费用 |
 |------|---------|---------|
-| `local` | 完全离线使用 | 零费用 |
-| `remote` | 需要 AI 增强的报告 | 需 API Key |
+| `auto` | 远程已配置时优先，失败自动回退 | 依配置而定 |
+| `local` | 完全使用本地引擎，不呼叫远程 API | 零费用 |
+| `remote` | 优先尝试远程，失败仍安全回退本地 | 需 API Key |
+
+决策页面可以选择分析模式。每份报告会记录 provider、model、quality score、引用验证结果、是否尝试远程，以及 fallback reason。远程失败不会把 provider body、URL query、API Key 或 stack trace 返回给浏览器。
+
+### AI quality gate
+
+远程报告必须通过 Zod schema、citation provenance 与质量检查：正好三项策略、三项以上风险、正好七项行动、三项以上复盘问题、至少两条有效引用、推荐理由、策略差异、绝对化字词与问题重复检查。质量分数低于 70 会触发一次带具体 warnings 的修复请求；修复仍失败则使用本地报告并记录 `REMOTE_QUALITY_FAILED`。修复请求不会重新检索知识。
 
 ## API 端点
 
@@ -69,15 +76,38 @@ wisdom-os/
 AI_BASE_URL=https://api.openai.com/v1/chat/completions
 AI_API_KEY=sk-xxx
 AI_MODEL=gpt-4o-mini
+AI_TIMEOUT_MS=25000
+AI_MAX_RETRIES=1
+AI_MAX_OUTPUT_TOKENS=1800
+AI_RESPONSE_FORMAT_MODE=prompt
+AI_TOTAL_BUDGET_MS=45000
+AI_THINKING_MODE=provider_default
 ```
 
-不配置或请求失败时自动使用本地引擎。`/api/health` 只返回是否完整配置、endpoint 和模型名称，不返回 API Key。
+这些变量只能放在服务器环境变量中，不能使用 `NEXT_PUBLIC_` 前缀。`AI_BASE_URL` 预期是完整的 `/chat/completions` URL。`AI_TIMEOUT_MS` 默认 25 秒，`AI_MAX_RETRIES` 默认 1 且最多只能是 1。`AI_MAX_OUTPUT_TOKENS` 默认 1800，范围为 800–4000；`AI_RESPONSE_FORMAT_MODE` 默认 `prompt`，只用提示词要求 JSON，以提高 OpenAI-compatible provider 相容性；只有设为 `json_object` 时才传 `response_format`。`AI_TOTAL_BUDGET_MS` 默认 45 秒，范围为 15–55 秒，剩余时间少于 10 秒时不会再进行品质修复。`AI_THINKING_MODE` 默认 `provider_default`；设为 `off` 时会传送 `chat_template_kwargs.enable_thinking=false`，设为 `on` 时传送 `true`，其他值一律回退默认值。推理内容绝不会作为报告、保存资料或 API 回应的一部分。
+
+不配置或请求失败时自动使用本地引擎；`remoteError` 与 `fallbackReason` 只使用安全错误代码。`/api/health` 只返回配置状态、脱敏 Base URL、模型、timeout、retry、输出上限、JSON 模式、Thinking 模式与总预算，不返回 API Key、请求内容或推理内容。
+
+本地开发不需要 API Key。远程 provider 使用统一的 `AiProvider` 介面，当前只有 generic OpenAI-compatible 实作，不引入供应商专用 SDK。
+
+### Rate limit
+
+`/api/analyze` 使用可替换的服务器端 abstraction，目前为记忆体实现：每个 IP 每分钟最多 10 次，超过后返回 HTTP 429 与 `RATE_LIMITED`。未来可以将同一介面替换为 Redis 或 Supabase，而不改变 API 路由。
+
+### 测试
+
+```bash
+pnpm test       # 单元/整合测试
+pnpm test:e2e   # Playwright，使用 production-like next start
+```
+
+测试不使用真实 API Key。远程成功、timeout、非 2xx、无效 JSON、citation 伪造、品质修复、fallback、rate limit 与主要报告/PDCA/主题流程均使用 mock 或本地数据验证。
 
 ## Vercel 部署
 
 1. 在 Vercel 中将 Root Directory 留空，使用 repository 根目录。repository 根目录已包含 `package.json`、`pnpm-workspace.yaml`、`vercel.json`、`apps` 与 `packages`。本机执行命令时才需要先进入 `wisdom-os` 文件夹。
 2. 使用默认的 `pnpm install` 与 `pnpm run build`。
-3. 在 Preview 与 Production 环境分别设置 `AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL`；不设置也可以零成本运行本地模式。
+3. 在 Preview 与 Production 环境分别设置 `AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL`、`AI_TIMEOUT_MS`、`AI_MAX_RETRIES`、`AI_MAX_OUTPUT_TOKENS`、`AI_RESPONSE_FORMAT_MODE`、`AI_TOTAL_BUDGET_MS`、`AI_THINKING_MODE`；不设置也可以零成本运行本地模式。
 4. 部署后访问 `/api/health`，确认 `remote.configured` 是否符合预期。
 
 报告和 PDCA 当前保存在浏览器本机；清除浏览器站点数据会删除这些记录。云端同步仍是后续 Supabase 计划。

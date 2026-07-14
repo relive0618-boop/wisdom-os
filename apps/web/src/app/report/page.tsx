@@ -198,6 +198,25 @@ function ReportContent() {
         </button>
       </div>
 
+      <section className="flex flex-wrap gap-2 rounded-xl border border-[#ded8cc] bg-[#fffdf9] p-4 text-xs text-[#77786f]">
+        <span className="rounded-full bg-[#eee9df] px-2.5 py-1">{r.mode === "remote" ? "Remote" : "Local"}</span>
+        <span>Provider：{data.provider || "local"}</span>
+        <span>Model：{data.model || "—"}</span>
+        <span>Quality：{data.qualityScore ?? "—"}</span>
+        <span>引用验证：{data.qualityPassed ? "通过" : "未通过"}</span>
+        {data.remoteLatencyMs !== null && data.remoteLatencyMs !== undefined && <span>远端耗时：{(data.remoteLatencyMs / 1000).toFixed(1)} 秒</span>}
+        <span>远端尝试：{data.remoteAttempts ?? 0}</span>
+        {data.remoteRepaired && <span>已执行品质修复</span>}
+        {data.remoteFinishReason && <span>Finish：{data.remoteFinishReason}</span>}
+        <span>JSON：{data.remoteJsonExtraction ?? "not_attempted"}</span>
+        {data.remoteContentLength !== null && data.remoteContentLength !== undefined && <span>Content：{data.remoteContentLength} 字符</span>}
+        {data.remotePromptTokens !== null && data.remotePromptTokens !== undefined && <span>Prompt tokens：{data.remotePromptTokens}</span>}
+        {data.remoteCompletionTokens !== null && data.remoteCompletionTokens !== undefined && <span>Completion tokens：{data.remoteCompletionTokens}</span>}
+        {data.remoteReasoningPresent && <span>Thinking：已产生{data.remoteReasoningLength !== null && data.remoteReasoningLength !== undefined ? `（${data.remoteReasoningLength} 字符）` : ""}</span>}
+        {data.remoteSchemaIssueCount > 0 && <span>Schema：{data.remoteSchemaIssueCount} 项（{data.remoteSchemaIssuePaths.join("、")}）</span>}
+        {data.fallbackReason && <span>Fallback：{data.fallbackReason}</span>}
+      </section>
+
       {/* Core Conflict & Situation */}
       <section className="rounded-xl border border-[#ded8cc] bg-[#fffdf9] p-6">
         <h3 className="mb-3 text-sm font-semibold">核心矛盾</h3>
