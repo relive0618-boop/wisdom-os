@@ -5,16 +5,18 @@ export type SeedTable = "knowledge_entries" | "case_entries";
 export const SeedErrorCodes = [
   "SEED_CLIENT_IMPORT_FAILED", "SEED_CLIENT_INIT_FAILED", "SEED_URL_INVALID", "SEED_SECRET_FORMAT_INVALID",
   "SEED_NETWORK_FAILED", "SEED_UPSERT_FAILED", "SEED_VERIFICATION_FAILED", "SEED_VALIDATION_FAILED", "SEED_SKIPPED_AFTER_FAILURE",
+  "SEED_AUTH_FAILED", "SEED_PERMISSION_DENIED", "SEED_TABLE_NOT_EXPOSED", "SEED_CONFLICT_FAILED", "SEED_REQUEST_INVALID", "SEED_PROVIDER_UNAVAILABLE",
 ] as const;
 export type SeedErrorCode = (typeof SeedErrorCodes)[number];
+export type SeedPhase = "client_init" | "upsert" | "verification";
 
 type SeedRow = { id: string; payload: Record<string, unknown>; status: "published"; deleted_at: null };
 export type SeedDataset = { knowledge: unknown; cases: unknown };
 export type SeedValidation = { knowledgeEntries: number; caseEntries: number; uniqueIds: number; crossTableIdCollisions: number; duplicateIds: number; invalidEntries: number; valid: boolean };
-export type SeedTableResult = { table: SeedTable; expected: number; confirmed: number; success: boolean; errorCode: SeedErrorCode | null };
-export type SeedApplyResult = { success: boolean; knowledge: SeedTableResult; cases: SeedTableResult };
+export type SeedTableResult = { table: SeedTable; expected: number; confirmed: number; success: boolean; errorCode: SeedErrorCode | null; httpStatus: number | null; providerCode: string | null; phase: SeedPhase };
+export type SeedApplyResult = { success: boolean; knowledge: SeedTableResult; cases: SeedTableResult; remoteWrites: number };
 export type SeedQueryResult = { data: unknown; error: unknown; status?: number; statusText?: string };
-export type SeedClient = { upsert: (table: SeedTable, rows: SeedRow[]) => Promise<SeedQueryResult>; verify: (table: SeedTable, ids: string[]) => Promise<SeedQueryResult> };
+export type SeedClient = { probe: (table: SeedTable) => Promise<SeedQueryResult>; upsert: (table: SeedTable, rows: SeedRow[]) => Promise<SeedQueryResult>; verify: (table: SeedTable, ids: string[]) => Promise<SeedQueryResult> };
 
 export class SeedUsageError extends Error { constructor() { super("SEED_USAGE_REQUIRED"); } }
 export class SeedError extends Error { constructor(readonly code: SeedErrorCode) { super(code); } }
@@ -76,6 +78,27 @@ export function formatDryRun(validation: SeedValidation): string {
 }
 
 function resultIsSuccessful(result: SeedQueryResult): boolean { return !result.error && (result.status === undefined || (result.status >= 200 && result.status < 300)) && (result.statusText === undefined || typeof result.statusText === "string"); }
+function safeHttpStatus(status: unknown): number | null { return typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599 ? status : null; }
+function rawProviderCode(error: unknown): string | null {
+  if (!error || typeof error !== "object" || typeof (error as { code?: unknown }).code !== "string") return null;
+  return (error as { code: string }).code;
+}
+function safeProviderCode(error: unknown): string | null {
+  const code = rawProviderCode(error); if (!code) return null;
+  return /^PGRST[2-9]\d\d$/.test(code) || ["23505", "23503", "42501", "42P01", "42703", "22P02"].includes(code) ? code : "SEED_PROVIDER_ERROR";
+}
+function classifyFailure(result: SeedQueryResult, fallback: SeedErrorCode): SeedErrorCode {
+  const status = safeHttpStatus(result.status); const code = rawProviderCode(result.error);
+  if (status === 401) return "SEED_AUTH_FAILED";
+  if (status === 403 || code === "42501") return "SEED_PERMISSION_DENIED";
+  if (status === 404 || code === "PGRST205" || code === "42P01") return "SEED_TABLE_NOT_EXPOSED";
+  if (status === 409 || code === "23505") return "SEED_CONFLICT_FAILED";
+  if (status === 400 || code === "42703" || code === "22P02") return "SEED_REQUEST_INVALID";
+  if (status !== null && status >= 500) return "SEED_PROVIDER_UNAVAILABLE";
+  return fallback;
+}
+function successResult(table: SeedTable, expected: number, confirmed: number, phase: SeedPhase, query: SeedQueryResult): SeedTableResult { return { table, expected, confirmed, success: true, errorCode: null, httpStatus: safeHttpStatus(query.status), providerCode: safeProviderCode(query.error), phase }; }
+function failedResult(table: SeedTable, expected: number, confirmed: number, phase: SeedPhase, errorCode: SeedErrorCode, query?: SeedQueryResult): SeedTableResult { return { table, expected, confirmed, success: false, errorCode: query ? classifyFailure(query, errorCode) : errorCode, httpStatus: query ? safeHttpStatus(query.status) : null, providerCode: query ? safeProviderCode(query.error) : null, phase }; }
 function rowsArePublished(data: unknown, expectedIds: string[]): boolean {
   if (!Array.isArray(data) || data.length !== expectedIds.length) return false;
   const expected = new Set(expectedIds);
@@ -87,26 +110,34 @@ async function applyTable(client: SeedClient, table: SeedTable, rows: SeedRow[])
   const expected = rows.length;
   try {
     const upsert = await client.upsert(table, rows);
-    if (!resultIsSuccessful(upsert)) return { table, expected, confirmed: 0, success: false, errorCode: "SEED_UPSERT_FAILED" };
+    if (!resultIsSuccessful(upsert)) return failedResult(table, expected, 0, "upsert", "SEED_UPSERT_FAILED", upsert);
     let confirmed = 0;
     for (const ids of chunks(rows.map((row) => row.id))) {
       const verification = await client.verify(table, ids);
-      if (!resultIsSuccessful(verification) || !rowsArePublished(verification.data, ids)) return { table, expected, confirmed, success: false, errorCode: "SEED_VERIFICATION_FAILED" };
+      if (!resultIsSuccessful(verification) || !rowsArePublished(verification.data, ids)) return failedResult(table, expected, confirmed, "verification", "SEED_VERIFICATION_FAILED", verification);
       confirmed += ids.length;
     }
-    return { table, expected, confirmed, success: true, errorCode: null };
-  } catch { return { table, expected, confirmed: 0, success: false, errorCode: "SEED_NETWORK_FAILED" }; }
+    return successResult(table, expected, confirmed, "verification", upsert);
+  } catch { return failedResult(table, expected, 0, "upsert", "SEED_NETWORK_FAILED"); }
 }
 
 export async function applySeed(client: SeedClient, validation: ReturnType<typeof validateSeedData>): Promise<SeedApplyResult> {
-  if (!validation.valid) return { success: false, knowledge: { table: "knowledge_entries", expected: validation.knowledgeEntries, confirmed: 0, success: false, errorCode: "SEED_VALIDATION_FAILED" }, cases: { table: "case_entries", expected: validation.caseEntries, confirmed: 0, success: false, errorCode: "SEED_VALIDATION_FAILED" } };
+  const skipped = (table: SeedTable, expected: number, phase: SeedPhase = "client_init") => failedResult(table, expected, 0, phase, "SEED_SKIPPED_AFTER_FAILURE");
+  if (!validation.valid) return { success: false, knowledge: failedResult("knowledge_entries", validation.knowledgeEntries, 0, "client_init", "SEED_VALIDATION_FAILED"), cases: failedResult("case_entries", validation.caseEntries, 0, "client_init", "SEED_VALIDATION_FAILED"), remoteWrites: 0 };
+  let knowledgeProbe: SeedQueryResult;
+  try { knowledgeProbe = await client.probe("knowledge_entries"); } catch { return { success: false, knowledge: failedResult("knowledge_entries", validation.knowledgeEntries, 0, "client_init", "SEED_NETWORK_FAILED"), cases: skipped("case_entries", validation.caseEntries), remoteWrites: 0 }; }
+  if (!resultIsSuccessful(knowledgeProbe)) return { success: false, knowledge: failedResult("knowledge_entries", validation.knowledgeEntries, 0, "client_init", "SEED_UPSERT_FAILED", knowledgeProbe), cases: skipped("case_entries", validation.caseEntries), remoteWrites: 0 };
+  let casesProbe: SeedQueryResult;
+  try { casesProbe = await client.probe("case_entries"); } catch { return { success: false, knowledge: skipped("knowledge_entries", validation.knowledgeEntries), cases: failedResult("case_entries", validation.caseEntries, 0, "client_init", "SEED_NETWORK_FAILED"), remoteWrites: 0 }; }
+  if (!resultIsSuccessful(casesProbe)) return { success: false, knowledge: skipped("knowledge_entries", validation.knowledgeEntries), cases: failedResult("case_entries", validation.caseEntries, 0, "client_init", "SEED_UPSERT_FAILED", casesProbe), remoteWrites: 0 };
   const knowledge = await applyTable(client, "knowledge_entries", validation.knowledgeRows);
-  if (!knowledge.success) return { success: false, knowledge, cases: { table: "case_entries", expected: validation.caseEntries, confirmed: 0, success: false, errorCode: "SEED_SKIPPED_AFTER_FAILURE" } };
+  if (!knowledge.success) return { success: false, knowledge, cases: skipped("case_entries", validation.caseEntries), remoteWrites: 1 };
   const cases = await applyTable(client, "case_entries", validation.caseRows);
-  return { success: knowledge.success && cases.success, knowledge, cases };
+  return { success: knowledge.success && cases.success, knowledge, cases, remoteWrites: 2 };
 }
 
 export function formatApplyResult(result: SeedApplyResult): string {
   const state = result.success ? "SAFE" : "FAILED";
-  return [`Seed apply: ${state}`, `Knowledge: ${result.knowledge.success ? "SUCCESS" : "FAILED"} (${result.knowledge.confirmed}/${result.knowledge.expected})`, `Cases: ${result.cases.success ? "SUCCESS" : "FAILED"} (${result.cases.confirmed}/${result.cases.expected})`, `Knowledge error: ${result.knowledge.errorCode ?? "NONE"}`, `Cases error: ${result.cases.errorCode ?? "NONE"}`, "Writes are idempotent upserts and can be safely re-run after a partial failure."].join("\n");
+  const details = (label: string, item: SeedTableResult) => [`${label}: ${item.success ? "SUCCESS" : "FAILED"} (${item.confirmed}/${item.expected})`, `${label} phase: ${item.phase}`, `${label} HTTP status: ${item.httpStatus ?? "NONE"}`, `${label} provider code: ${item.providerCode ?? "NONE"}`, `${label} error: ${item.errorCode ?? "NONE"}`];
+  return [`Seed apply: ${state}`, ...details("Knowledge", result.knowledge), ...details("Cases", result.cases), `Remote writes attempted: ${result.remoteWrites}`, "Writes are idempotent upserts and can be safely re-run after a partial failure."].join("\n");
 }

@@ -34,10 +34,14 @@ function runSeedCommand(extraEnv: Record<string, string> = {}) {
   });
 }
 
-function successfulClient(options: { failKnowledge?: boolean; failCases?: boolean; invalidVerification?: boolean } = {}): SeedClient & { calls: string[] } {
+function successfulClient(options: { failKnowledge?: boolean; failCases?: boolean; invalidVerification?: boolean; probeResult?: { data: unknown; error: unknown; status: number; statusText: string } } = {}): SeedClient & { calls: string[] } {
   const calls: string[] = [];
   return {
     calls,
+    probe: async (table) => {
+      calls.push(`probe:${table}`);
+      return options.probeResult ?? { data: null, error: null, status: 200, statusText: "OK" };
+    },
     upsert: async (table, rows) => {
       calls.push(`upsert:${table}:${rows.length}`);
       if ((table === "knowledge_entries" && options.failKnowledge) || (table === "case_entries" && options.failCases)) {
@@ -103,22 +107,22 @@ test("apply 成功後核對遠端 ID 與數量", async () => {
   assert.equal(result.success, true);
   assert.equal(result.knowledge.confirmed, 1);
   assert.equal(result.cases.confirmed, 1);
-  assert.deepEqual(client.calls, ["upsert:knowledge_entries:1", "verify:knowledge_entries:1", "upsert:case_entries:1", "verify:case_entries:1"]);
+  assert.deepEqual(client.calls, ["probe:knowledge_entries", "probe:case_entries", "upsert:knowledge_entries:1", "verify:knowledge_entries:1", "upsert:case_entries:1", "verify:case_entries:1"]);
 });
 test("knowledge upsert error 被安全捕捉且停止後續寫入", async () => {
   const client = successfulClient({ failKnowledge: true });
   const result = await applySeed(client, validateSeedData(validData()));
   assert.equal(result.success, false);
-  assert.equal(result.knowledge.errorCode, "SEED_UPSERT_FAILED");
+  assert.equal(result.knowledge.errorCode, "SEED_REQUEST_INVALID");
   assert.equal(result.cases.errorCode, "SEED_SKIPPED_AFTER_FAILURE");
-  assert.deepEqual(client.calls, ["upsert:knowledge_entries:1"]);
+  assert.deepEqual(client.calls, ["probe:knowledge_entries", "probe:case_entries", "upsert:knowledge_entries:1"]);
 });
 test("case upsert error 被安全捕捉且不謊稱整體成功", async () => {
   const client = successfulClient({ failCases: true });
   const result = await applySeed(client, validateSeedData(validData()));
   assert.equal(result.success, false);
   assert.equal(result.knowledge.success, true);
-  assert.equal(result.cases.errorCode, "SEED_UPSERT_FAILED");
+  assert.equal(result.cases.errorCode, "SEED_REQUEST_INVALID");
   assert.match(formatApplyResult(result), /Seed apply: FAILED/);
 });
 test("遠端核對不完整被視為失敗", async () => {
@@ -142,6 +146,35 @@ test("seed 實作沒有破壞性資料庫操作", () => {
   const source = readFileSync(resolve(process.cwd(), "scripts/seed-supabase-content-lib.ts"), "utf8");
   assert.doesNotMatch(source, /\.delete\s*\(|\.truncate\s*\(|\bdrop\s+/i);
 });
+function diagnosticClient(status: number, code: string | null): SeedClient & { calls: string[] } {
+  const calls: string[] = [];
+  return {
+    calls,
+    probe: async (table) => { calls.push(`probe:${table}`); return { data: null, error: { code, message: "private message", details: "private details", hint: "private hint" }, status, statusText: "Error" }; },
+    upsert: async () => { calls.push("upsert"); return { data: null, error: null, status: 200, statusText: "OK" }; },
+    verify: async () => ({ data: [], error: null, status: 200, statusText: "OK" }),
+  };
+}
+for (const [status, code, expected] of [[401, null, "SEED_AUTH_FAILED"], [403, "42501", "SEED_PERMISSION_DENIED"], [404, "PGRST205", "SEED_TABLE_NOT_EXPOSED"], [409, "23505", "SEED_CONFLICT_FAILED"], [500, null, "SEED_PROVIDER_UNAVAILABLE"]] as const) {
+  test(`probe ${status} 安全分類為 ${expected}`, async () => {
+    const client = diagnosticClient(status, code); const result = await applySeed(client, validateSeedData(validData()));
+    assert.equal(result.knowledge.errorCode, expected); assert.equal(result.knowledge.httpStatus, status); assert.equal(result.knowledge.providerCode, code); assert.equal(result.knowledge.phase, "client_init"); assert.equal(result.remoteWrites, 0); assert.deepEqual(client.calls, ["probe:knowledge_entries"]);
+  });
+}
+test("probe network throw 為 SEED_NETWORK_FAILED 且零寫入", async () => {
+  const client: SeedClient = { probe: async () => { throw new Error(); }, upsert: async () => ({ data: null, error: null, status: 200, statusText: "OK" }), verify: async () => ({ data: [], error: null, status: 200, statusText: "OK" }) };
+  const result = await applySeed(client, validateSeedData(validData()));
+  assert.equal(result.knowledge.errorCode, "SEED_NETWORK_FAILED"); assert.equal(result.remoteWrites, 0);
+});
+test("安全診斷不輸出 provider message details 或 hint", async () => {
+  const result = await applySeed(diagnosticClient(404, "PGRST205"), validateSeedData(validData())); const output = formatApplyResult(result);
+  assert.match(output, /Knowledge HTTP status: 404[\s\S]*Knowledge provider code: PGRST205[\s\S]*SEED_TABLE_NOT_EXPOSED/);
+  assert.doesNotMatch(output, /private message|private details|private hint/);
+});
+test("未知 provider code 會脫敏為 SEED_PROVIDER_ERROR", async () => {
+  const result = await applySeed(diagnosticClient(418, "UNSAFE_CODE"), validateSeedData(validData()));
+  assert.equal(result.knowledge.providerCode, "SEED_PROVIDER_ERROR"); assert.equal(result.knowledge.errorCode, "SEED_UPSERT_FAILED");
+});
 test("web package 從 runner 位置可解析 Supabase SDK", () => {
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", 'process.stdout.write(import.meta.resolve("@supabase/supabase-js"))'], { cwd: resolve(process.cwd(), "scripts"), encoding: "utf8" });
   assert.equal(result.status, 0);
@@ -164,4 +197,10 @@ test("實際 package command 的 client 初始化失敗回傳安全代碼", () =
   assert.equal(result.status, 1);
   assert.match(output, /SEED_CLIENT_INIT_FAILED/);
   assert.doesNotMatch(output, new RegExp(`${mockUrl}|${mockSecret}|SEED_FAILED`));
+});
+test("實際 package command 可安全回報 Data API table exposure 失敗", () => {
+  const result = runSeedCommand({ WISDOM_SEED_TEST_RESPONSE_STATUS: "404", WISDOM_SEED_TEST_PROVIDER_CODE: "PGRST205" }); const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 1);
+  assert.match(output, /Knowledge phase: client_init[\s\S]*Knowledge HTTP status: 404[\s\S]*Knowledge provider code: PGRST205[\s\S]*SEED_TABLE_NOT_EXPOSED/);
+  assert.doesNotMatch(output, new RegExp(`${mockUrl}|${mockSecret}|private message|details|hint`));
 });

@@ -2,7 +2,7 @@
 
 ## Scope 与 Architecture
 
-建立专案后执行 migration。先运行 `pnpm seed:supabase` 完成本机离线预检；它不读取环境变量、不建立 client、没有网络或远端写入。runner 位于 `apps/web/scripts/`，与其拥有的 `@supabase/supabase-js` dependency 同一 package。确认计数与 schema 正确后，才以部署平台的 server-only Secret Key 明确运行 `pnpm seed:supabase:apply`。apply 会先验证 HTTPS `.supabase.co` URL 与 `sb_secret_` Secret Key 格式，再只以 `id` upsert `knowledge_entries` 与 `case_entries`，写入后会分批只读核对；不包含 delete、truncate 或其他表的操作。浏览器只取得 URL 与 Publishable Key；Secret Key 与 `RATE_LIMIT_HASH_SECRET` 只在部署平台服务器环境。
+建立专案后执行 migration。先运行 `pnpm seed:supabase` 完成本机离线预检；它不读取环境变量、不建立 client、没有网络或远端写入。runner 位于 `apps/web/scripts/`，与其拥有的 `@supabase/supabase-js` dependency 同一 package。确认计数与 schema 正确后，才以部署平台的 server-only Secret Key 明确运行 `pnpm seed:supabase:apply`。apply 会先验证 HTTPS `.supabase.co` URL 与 `sb_secret_` Secret Key 格式，再以 HEAD/limit-0 只读 probe 确认两张内容表可经 Data API 存取；probe 失败时保证 0 次写入，并只输出安全的 HTTP status、allowlisted provider code 与分类代码。probe 通过后，才以 `id` upsert `knowledge_entries` 与 `case_entries`，写入后会分批只读核对；不包含 delete、truncate 或其他表的操作。浏览器只取得 URL 与 Publishable Key；Secret Key 与 `RATE_LIMIT_HASH_SECRET` 只在部署平台服务器环境。
 
 ## Preview flow
 
