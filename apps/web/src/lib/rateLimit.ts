@@ -28,8 +28,8 @@ export function resetRateLimit() {
 export type RateLimitResult = ReturnType<typeof checkRateLimit> & { backend: "memory" | "supabase" };
 
 export async function checkRateLimitForRequest(ip: string, route = "/api/analyze"): Promise<RateLimitResult> {
-  const { supabaseConfig } = await import("@/lib/supabase/config");
-  const config = supabaseConfig();
+  const { serverSupabaseConfig } = await import("@/lib/supabase/serverConfig");
+  const config = serverSupabaseConfig();
   const memory = () => ({ ...checkRateLimit(`${route}:${ip}`), backend: "memory" as const });
   if (!config.flags.persistentRateLimitEnabled || !config.secretKey || !process.env.RATE_LIMIT_HASH_SECRET) return memory();
   try {

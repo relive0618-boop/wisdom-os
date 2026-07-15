@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { HealthResponseSchema } from "@wisdom/shared";
 import { publicRemoteConfig } from "@/lib/ai";
 import { publicCloudConfig } from "@/lib/supabase/config";
+import { serverSupabaseConfig } from "@/lib/supabase/serverConfig";
 
 export async function GET() {
   const remote = publicRemoteConfig();
-  const cloud = publicCloudConfig();
+  const cloud = { ...publicCloudConfig(), persistentRateLimitEnabled: serverSupabaseConfig().flags.persistentRateLimitEnabled };
   return NextResponse.json(HealthResponseSchema.parse({
     ok: true,
     app: "AI Wisdom OS",

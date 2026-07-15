@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { AnalyzeInputSchema, CloudErrorCodeSchema, CloudMutationSchema, SyncMetadataSchema, SyncPushRequestSchema } from "@wisdom/shared";
 import { conflictDuplicateId, stableHash, SYNC_BATCH_SIZE } from "./cloud/sync";
 import { claimsAreAdmin, claimsUserId } from "./supabase/claims";
@@ -10,6 +12,8 @@ import { batches, summarizeResults } from "./sync/batchProcessor";
 import { planSync } from "./sync/syncPlanner";
 import { resolveConflict } from "./sync/conflictResolver";
 import { migrationProgress } from "./sync/migrationRunner";
+
+const migration = readFileSync(resolve(process.cwd(), "../../supabase/migrations/20260715_wisdom_os_v04.sql"), "utf8");
 
 test("cloud error code 維持封閉集合", () => assert.equal(CloudErrorCodeSchema.safeParse("CLOUD_INTERNAL_ERROR").success, true));
 test("未知 cloud error code 被拒絕", () => assert.equal(CloudErrorCodeSchema.safeParse("SQL_ERROR").success, false));
@@ -60,3 +64,15 @@ test("keep cloud 建立 backup", () => assert.equal(resolveConflict({ reportId: 
 test("keep both 產生新 ID", () => assert.notEqual((resolveConflict({ reportId: "r" }, "both") as { value: { reportId: string } }).value.reportId, "r"));
 test("decide later 保留 conflict", () => assert.equal(resolveConflict({ reportId: "r" }, "later").action, "keep_conflict"));
 test("migration 26 筆兩批", () => assert.equal(migrationProgress(Array.from({ length: 26 }, (_, index) => String(index))).totalBatches, 2));
+test("migration 顯式撤銷所有 cloud table 的基礎權限", () => assert.match(migration, /revoke all on table public\.profiles, public\.user_reports, public\.user_pdca_cycles, public\.knowledge_entries, public\.case_entries, public\.admin_audit_logs, public\.rate_limit_buckets from anon, authenticated, service_role/));
+test("anon 僅獲得公開內容 select", () => assert.match(migration, /grant select on table public\.knowledge_entries, public\.case_entries to anon/));
+test("anon 未獲得任何 write grant", () => assert.doesNotMatch(migration, /grant (?:insert|update|delete|all) on table [^;]+ to anon/));
+test("authenticated 可操作自己的 report 表", () => { assert.match(migration, /grant select, insert, update, delete on table public\.user_reports, public\.user_pdca_cycles to authenticated/); assert.match(migration, /"reports_own"[\s\S]*auth\.uid\(\)\) = user_id/); });
+test("authenticated report RLS 仍有 owner check", () => assert.match(migration, /"pdca_own"[\s\S]*auth\.uid\(\)\) = user_id/));
+test("普通 authenticated 沒有 audit 寫入 grant", () => assert.doesNotMatch(migration, /grant [^;]*(?:insert|update|delete)[^;]*admin_audit_logs[^;]*to authenticated/));
+test("admin content grant 仍由 app metadata RLS 限制", () => { assert.match(migration, /knowledge_admin_all[\s\S]*select public\.is_admin\(\)/); assert.match(migration, /auth\.jwt\(\) -> 'app_metadata'/); });
+test("user metadata 不出現在 migration 授權決策", () => assert.doesNotMatch(migration, /user_metadata/));
+test("rate limit bucket 無 browser grant", () => { assert.doesNotMatch(migration, /grant [^;]*rate_limit_buckets[^;]*to (?:anon|authenticated)/); assert.match(migration, /revoke all on table[\s\S]*rate_limit_buckets/); });
+test("rate limit RPC 只 grant service role", () => { assert.match(migration, /revoke all on function public\.consume_rate_limit[\s\S]*from public/); assert.match(migration, /grant execute on function public\.consume_rate_limit[\s\S]*to service_role/); });
+test("security definer functions 固定 search path", () => { assert.match(migration, /is_admin\(\)[\s\S]*set search_path = ''/); assert.match(migration, /consume_rate_limit[\s\S]*set search_path = pg_catalog, pg_temp/); });
+test("UUID 設計不需要 sequence grant", () => assert.match(migration, /no identity\/serial sequence grant is required/));

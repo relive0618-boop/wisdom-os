@@ -57,6 +57,9 @@ end;
 $$;
 create or replace function public.set_wisdom_timestamps() returns trigger language plpgsql security invoker set search_path = '' as $$ begin new.updated_at = now(); return new; end; $$;
 create or replace function public.handle_new_profile() returns trigger language plpgsql security definer set search_path = '' as $$ begin insert into public.profiles(id) values(new.id) on conflict (id) do nothing; return new; end; $$;
+revoke all on function public.handle_new_profile() from public;
+revoke all on function public.set_wisdom_timestamps_and_revision() from public;
+revoke all on function public.set_wisdom_timestamps() from public;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users for each row execute function public.handle_new_profile();
 
@@ -90,10 +93,23 @@ create policy "cases_public_published" on public.case_entries for select to anon
 create policy "cases_admin_all" on public.case_entries for all to authenticated using ((select public.is_admin())) with check ((select public.is_admin()));
 create policy "audit_admin_select" on public.admin_audit_logs for select to authenticated using ((select public.is_admin()));
 
-revoke all on public.rate_limit_buckets from anon, authenticated;
+-- Explicit Data API grants. RLS remains the row-level enforcement boundary.
+revoke all on table public.profiles, public.user_reports, public.user_pdca_cycles, public.knowledge_entries, public.case_entries, public.admin_audit_logs, public.rate_limit_buckets from anon, authenticated, service_role;
+grant select on table public.knowledge_entries, public.case_entries to anon;
+grant select, update on table public.profiles to authenticated;
+grant select, insert, update, delete on table public.user_reports, public.user_pdca_cycles to authenticated;
+grant select, insert, update, delete on table public.knowledge_entries, public.case_entries to authenticated;
+grant select on table public.admin_audit_logs to authenticated;
+grant select, insert, update on table public.knowledge_entries, public.case_entries to service_role;
+grant insert on table public.admin_audit_logs to service_role;
+
+-- UUID and text keys are used throughout; no identity/serial sequence grant is required.
+alter default privileges in schema public revoke all on tables from anon, authenticated;
+alter default privileges in schema public revoke all on sequences from anon, authenticated;
+
 create or replace function public.consume_rate_limit(identifier_hash_input text, route_name text, limit_count integer, window_seconds integer)
 returns table(allowed boolean, remaining integer, reset_at timestamptz)
-language plpgsql security definer set search_path = public, pg_temp as $$
+language plpgsql security definer set search_path = pg_catalog, pg_temp as $$
 declare bucket timestamptz := date_trunc('minute', now()); current_count integer;
 begin
   if identifier_hash_input is null or route_name is null or limit_count < 1 or window_seconds < 1 then raise exception 'invalid rate limit input'; end if;
