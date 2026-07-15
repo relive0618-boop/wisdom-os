@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -10,7 +11,7 @@ import {
   parseSeedMode,
   type SeedClient,
   validateSeedData,
-} from "../../../../scripts/seed-supabase-content-lib";
+} from "../../scripts/seed-supabase-content-lib";
 
 const knowledge = {
   id: "knowledge-1", chapter: "第一篇", title: "知己知彼", source: "孙子兵法", plain: "先评估条件。",
@@ -21,6 +22,17 @@ const caseEntry = {
   lessons: ["先验证"], tags: ["测试"], case_type: "composite", source_title: null, source_url: null, source_date: null, review_status: "reviewed",
 };
 const validData = () => ({ knowledge: [knowledge], cases: [caseEntry] });
+const mockUrl = `https://${"seed-runner-test"}.supabase.co`;
+const mockSecret = ["sb", "secret", "seed", "runner", "test"].join("_");
+const repositoryRoot = resolve(process.cwd(), "../..");
+
+function runSeedCommand(extraEnv: Record<string, string> = {}) {
+  return spawnSync("pnpm", ["seed:supabase:apply"], {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    env: { ...process.env, NODE_ENV: "test", NEXT_PUBLIC_SUPABASE_URL: mockUrl, SUPABASE_SECRET_KEY: mockSecret, WISDOM_SEED_TEST_FETCH: "mock", ...extraEnv },
+  });
+}
 
 function successfulClient(options: { failKnowledge?: boolean; failCases?: boolean; invalidVerification?: boolean } = {}): SeedClient & { calls: string[] } {
   const calls: string[] = [];
@@ -58,9 +70,9 @@ test("dry-run 本機驗證不需要環境變數或 client", () => {
   assert.match(formatDryRun(result), /Seed dry-run: SAFE[\s\S]*Remote writes: 0/);
 });
 test("dry-run 路徑不靜態載入 Supabase client 或網路層", () => {
-  const source = readFileSync(resolve(process.cwd(), "../../scripts/seed-supabase-content.ts"), "utf8");
+  const source = readFileSync(resolve(process.cwd(), "scripts/seed-supabase-content.ts"), "utf8");
   assert.doesNotMatch(source, /^import\s+\{\s*createClient/m);
-  assert.match(source, /mode === "dry-run"[\s\S]*else \{[\s\S]*createApplyClient/);
+  assert.match(source, /if \(mode === "dry-run"\)[\s\S]*return;[\s\S]*createApplyClient/);
 });
 test("duplicate id 被拒絕", () => {
   const result = validateSeedData({ knowledge: [knowledge, knowledge], cases: [caseEntry] });
@@ -78,8 +90,13 @@ test("跨表相同 id 被明確標為允許", () => {
   assert.equal(result.crossTableIdCollisions, 1);
   assert.match(formatDryRun(result), /allowed: separate tables/);
 });
-test("apply 缺 URL 被拒絕且不顯示值", () => assert.throws(() => applyConfiguration({ SUPABASE_SECRET_KEY: "hidden" }), /SUPABASE_SEED_URL_MISSING/));
-test("apply 缺 Secret 被拒絕", () => assert.throws(() => applyConfiguration({ NEXT_PUBLIC_SUPABASE_URL: "https://example.test" }), /SUPABASE_SEED_SECRET_MISSING/));
+test("apply 缺 URL 被安全拒絕", () => assert.throws(() => applyConfiguration({ SUPABASE_SECRET_KEY: mockSecret }), /SEED_URL_INVALID/));
+test("apply 缺 Secret 被安全拒絕", () => assert.throws(() => applyConfiguration({ NEXT_PUBLIC_SUPABASE_URL: mockUrl }), /SEED_SECRET_FORMAT_INVALID/));
+test("apply 拒絕不安全 URL 與非 Secret Key", () => {
+  assert.throws(() => applyConfiguration({ NEXT_PUBLIC_SUPABASE_URL: "http://project.supabase.co", SUPABASE_SECRET_KEY: mockSecret }), /SEED_URL_INVALID/);
+  assert.throws(() => applyConfiguration({ NEXT_PUBLIC_SUPABASE_URL: "https://user:pass@project.supabase.co", SUPABASE_SECRET_KEY: mockSecret }), /SEED_URL_INVALID/);
+  assert.throws(() => applyConfiguration({ NEXT_PUBLIC_SUPABASE_URL: mockUrl, SUPABASE_SECRET_KEY: "wisdom_os_preview_vercel" }), /SEED_SECRET_FORMAT_INVALID/);
+});
 test("apply 成功後核對遠端 ID 與數量", async () => {
   const client = successfulClient();
   const result = await applySeed(client, validateSeedData(validData()));
@@ -122,6 +139,29 @@ test("seed 日誌只含安全摘要，不含 payload 或 credential", () => {
   assert.doesNotMatch(summary, /孙子兵法|https?:|secret|token|payload/i);
 });
 test("seed 實作沒有破壞性資料庫操作", () => {
-  const source = readFileSync(resolve(process.cwd(), "../../scripts/seed-supabase-content-lib.ts"), "utf8");
+  const source = readFileSync(resolve(process.cwd(), "scripts/seed-supabase-content-lib.ts"), "utf8");
   assert.doesNotMatch(source, /\.delete\s*\(|\.truncate\s*\(|\bdrop\s+/i);
+});
+test("web package 從 runner 位置可解析 Supabase SDK", () => {
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", 'process.stdout.write(import.meta.resolve("@supabase/supabase-js"))'], { cwd: resolve(process.cwd(), "scripts"), encoding: "utf8" });
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /supabase-js/);
+});
+test("實際 package apply command 可初始化 client 且不發出網路請求", () => {
+  const result = runSeedCommand(); const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 0);
+  assert.match(output, /Seed apply: SAFE/);
+  assert.doesNotMatch(output, new RegExp(`${mockUrl}|${mockSecret}`));
+});
+test("實際 package command 的 import 失敗回傳安全代碼", () => {
+  const result = runSeedCommand({ WISDOM_SEED_TEST_IMPORT_FAILURE: "1" }); const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 1);
+  assert.match(output, /SEED_CLIENT_IMPORT_FAILED/);
+  assert.doesNotMatch(output, new RegExp(`${mockUrl}|${mockSecret}|SEED_FAILED`));
+});
+test("實際 package command 的 client 初始化失敗回傳安全代碼", () => {
+  const result = runSeedCommand({ WISDOM_SEED_TEST_CLIENT_INIT_FAILURE: "1" }); const output = `${result.stdout}${result.stderr}`;
+  assert.equal(result.status, 1);
+  assert.match(output, /SEED_CLIENT_INIT_FAILED/);
+  assert.doesNotMatch(output, new RegExp(`${mockUrl}|${mockSecret}|SEED_FAILED`));
 });

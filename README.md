@@ -125,7 +125,7 @@ WISDOM_PERSISTENT_RATE_LIMIT_ENABLED=false
 RATE_LIMIT_HASH_SECRET=
 ```
 
-在 Supabase 先执行 `supabase/migrations/20260715_wisdom_os_v04.sql`。`pnpm seed:supabase` 是完全离线的预检：不读取环境变量、不建立 Supabase client、不会发出网络请求或写入资料。只有在 Preview 的服务器环境已安全配置后，才明确执行 `pnpm seed:supabase:apply`；它只会以 `id` upsert `knowledge_entries` 与 `case_entries`，并逐批只读核对 `published` 与 `deleted_at` 状态。两张表不是跨表 transaction，若后段失败会清楚标记部分成功；可安全重跑 apply。迁移会开启 RLS：用户只能访问自己的报告和 PDCA；公开内容只读取 `published`；管理员角色只取自 JWT `app_metadata.role`。同步永远由使用者在 `/sync` 明确开始，每批最多 25 笔，以 SHA-256 比对；发生冲突时选择本地、云端或两者，绝不自动删除本地数据。
+在 Supabase 先执行 `supabase/migrations/20260715_wisdom_os_v04.sql`。`pnpm seed:supabase` 是完全离线的预检：不读取环境变量、不建立 Supabase client、不会发出网络请求或写入资料。实际 runner 位于拥有 `@supabase/supabase-js` 的 `apps/web` package，避免 pnpm workspace 的跨 package 解析依赖。只有在 Preview 的服务器环境已安全配置后，才明确执行 `pnpm seed:supabase:apply`；它会先拒绝不安全的 URL 或非 Secret Key，再只以 `id` upsert `knowledge_entries` 与 `case_entries`，并逐批只读核对 `published` 与 `deleted_at` 状态。两张表不是跨表 transaction，若后段失败会清楚标记部分成功；可安全重跑 apply。迁移会开启 RLS：用户只能访问自己的报告和 PDCA；公开内容只读取 `published`；管理员角色只取自 JWT `app_metadata.role`。同步永远由使用者在 `/sync` 明确开始，每批最多 25 笔，以 SHA-256 比对；发生冲突时选择本地、云端或两者，绝不自动删除本地数据。
 
 持久化 rate limit 是可选项：服务器先以 HMAC-SHA256 将 IP 匿名化后才传到数据库，数据库不保存原始 IP；数据库异常会安全降级为记忆体限流。详细作业说明见 `docs/`。
 
