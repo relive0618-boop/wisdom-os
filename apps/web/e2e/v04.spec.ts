@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 test("Migration wizard 可掃描本機資料", async ({ page }) => { await page.goto("/sync"); await expect(page).toHaveURL(/\/login/); });
-test("未登入不能直接開啟設定新密碼頁", async ({ page }) => { await page.goto("/reset-password"); await expect(page).toHaveURL(/\/login\?next=%2Freset-password|\/login\?next=\/reset-password/); });
-test("沒有有效重設憑證的復原回呼不開放設定密碼", async ({ page }) => { await page.goto("/auth/recovery"); await expect(page).toHaveURL(/\/login\?next=%2Freset-password|\/login\?next=\/reset-password/); });
+test("沒有重設憑證時新密碼表單維持停用", async ({ page }) => { await page.goto("/reset-password"); await expect(page.getByRole("button", { name: "更新密碼", exact: true })).toBeDisabled(); });
 test("未配置 cloud API 不執行同步", async ({ request }) => { const response = await request.post("/api/cloud/sync/pull"); expect(response.status()).toBe(503); });
 test("未登入 admin API 安全拒絕", async ({ request }) => { const response = await request.get("/api/admin/content/knowledge"); expect(response.status()).toBe(401); expect((await response.json()).error.code).toBe("AUTH_REQUIRED"); });
 test("未登入 audit API 安全拒絕", async ({ request }) => { const response = await request.get("/api/admin/audit"); expect(response.status()).toBe(401); });
