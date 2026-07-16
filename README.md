@@ -129,6 +129,16 @@ RATE_LIMIT_HASH_SECRET=
 
 持久化 rate limit 是可选项：服务器先以 HMAC-SHA256 将 IP 匿名化后才传到数据库，数据库不保存原始 IP；数据库异常会安全降级为记忆体限流。详细作业说明见 `docs/`。
 
+Preview Supabase 已完成真实 migration、RLS／Policies／Data API grants 验证与内容 seed：`knowledge_entries` 为 56 笔、`case_entries` 为 30 笔。seed runner 直接保留 Supabase 原生 query result 的 `status`／`statusText`，不使用共享 FIFO 推测 HTTP 状态。Preview 的 Auth、跨装置同步、Admin 与 persistent rate limit 仍须在真实浏览器中按 `docs/v0.4-preview-live-verification.md` 验收；Production flags 与 credentials 保持未设定。
+
+已配置 Preview 后，可使用完全只读的 smoke test：
+
+```bash
+pnpm verify:preview -- --base-url <PREVIEW_URL>
+```
+
+它只接受 HTTPS URL（本机须额外传 `--allow-local`）、只发送 GET，不读取任何 server secret，也不会建立帐号、登入或改动云端资料。
+
 ## 路线图
 
 - [x] 决策分析引擎（56 条孙子兵法知识）
@@ -139,8 +149,8 @@ RATE_LIMIT_HASH_SECRET=
 - [x] 决策历史 + 报告/PDCA 本地持久化
 - [x] OpenAI-compatible 远程 AI + 本地 fallback
 - [x] Zod 输入、输出与报告校验
-- [~] Supabase 云端帐号、RLS 迁移与选择性同步（程式与 mock 测试进行中；尚未连接真实 Supabase）
-- [~] 知识与案例管理的审核资料模型（Production feature flags 保持关闭）
+- [~] Supabase 云端帐号、RLS 迁移与选择性同步（Preview migration、RLS／grants 与内容 seed 已真实验证；浏览器 Auth／Sync／Admin／rate limit 待验收）
+- [~] 知识与案例管理的审核资料模型（Preview 待浏览器验收；Production feature flags 保持关闭）
 - [ ] 个人决策模型（偏好学习）
 - [ ] 多经典扩展（易经、鬼谷子...）
 - [ ] Stripe 商业化

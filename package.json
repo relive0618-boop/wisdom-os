@@ -11,13 +11,8 @@
     "typecheck": "pnpm -r typecheck",
     "preinstall": "npx only-allow pnpm",
     "seed:supabase": "pnpm --filter web seed:supabase",
-    "seed:supabase:apply": "pnpm --filter web seed:supabase:apply"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "sharp",
-      "unrs-resolver"
-    ]
+    "seed:supabase:apply": "pnpm --filter web seed:supabase:apply",
+    "verify:preview": "pnpm --filter web exec tsx ../../scripts/verify-preview.mts"
   },
   "engines": {
     "node": ">=20"

@@ -1,13 +1,23 @@
 # Supabase 设置
 
-## Scope 与 Architecture
+## 已完成的 Preview 基础设施验证
 
-建立专案后执行 migration。先运行 `pnpm seed:supabase` 完成本机离线预检；它不读取环境变量、不建立 client、没有网络或远端写入。runner 位于 `apps/web/scripts/`，与其拥有的 `@supabase/supabase-js` dependency 同一 package。确认计数与 schema 正确后，才以部署平台的 server-only Secret Key 明确运行 `pnpm seed:supabase:apply`。apply 会先验证 HTTPS `.supabase.co` URL 与 `sb_secret_` Secret Key 格式，再以 HEAD/limit-0 只读 probe 确认两张内容表可经 Data API 存取；probe 失败时保证 0 次写入，并只输出安全的 HTTP status、allowlisted provider code 与分类代码。probe 通过后，才以 `id` upsert `knowledge_entries` 与 `case_entries`，写入后会分批只读核对；不包含 delete、truncate 或其他表的操作。浏览器只取得 URL 与 Publishable Key；Secret Key 与 `RATE_LIMIT_HASH_SECRET` 只在部署平台服务器环境。
+Preview Supabase 专案已真实套用 `20260715_wisdom_os_v04.sql`。七张 public table 均已启用 RLS，Policies、Data API table grants 与 function grants 已完成验证。内容 seed 也已真实完成：`knowledge_entries` 为 56 笔，`case_entries` 为 30 笔。
 
-## Preview flow
+`pnpm seed:supabase` 永远只做本机离线预检：不读取环境变量、不建立 Supabase client、不发出网络请求，且输出 `Remote writes: 0`。真实 apply 已使用 server-only Secret Key 完成，不应在日常或 Preview 验收时重跑。seed runner 使用 Supabase 原生 transport，直接保留每个 query 的原生 `status`／`statusText`；不使用 `captureStatus` wrapper 或 FIFO response queue。
 
-之后可在 Preview 设置变量、Auth redirect URL 与邮件模板，执行 `supabase db push`、`pnpm seed:supabase`，并在明确确认后才执行 `pnpm seed:supabase:apply`，再验证 RLS 与 Auth callback。不要将真实值写入 `.env`、Git 或日志。
+## Preview 环境边界
 
-## Production boundary、Manual verification 与 limitations
+Preview 才能设置 `NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`、`SUPABASE_SECRET_KEY`、`NEXT_PUBLIC_WISDOM_CLOUD_SYNC_ENABLED`、`NEXT_PUBLIC_WISDOM_ADMIN_ENABLED`、`WISDOM_PERSISTENT_RATE_LIMIT_ENABLED` 与 `RATE_LIMIT_HASH_SECRET`。只有前两个 `NEXT_PUBLIC_` 值可进入浏览器；两个 Secret 仅能留在服务器环境，不能写入 Git、PR、聊天、截图、日志或 `.env`。
 
-Production 本 PR 不设置任何变量，feature flags 保持 false。执行 `docs/v0.4-rls-verification.sql` 的只读查询，确认 RLS、policy 和 function grants。已知限制：尚未连接真实 Supabase，故 migration 和 seed 尚未实测。
+Production 本 PR 不设置云端 credentials，所有 cloud feature flags 保持 false／unset。不要复制 Preview Secret 到 Production。
+
+## 只读 Preview smoke test
+
+Preview 部署后执行：
+
+```bash
+pnpm verify:preview -- --base-url <PREVIEW_URL>
+```
+
+工具只发送 GET，检查 health、56 条知识、30 个案例、未登入 cloud/admin API 拒绝与 response 安全边界；它不读取 Secret、不会登入、建立帐号或写入 Supabase。完整人工验收流程见 `docs/v0.4-preview-live-verification.md`。
