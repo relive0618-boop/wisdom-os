@@ -17,12 +17,15 @@ const migration = readFileSync(resolve(process.cwd(), "../../supabase/migrations
 const authForm = readFileSync(resolve(process.cwd(), "src/components/auth/AuthForm.tsx"), "utf8");
 const resetPasswordForm = readFileSync(resolve(process.cwd(), "src/components/auth/ResetPasswordForm.tsx"), "utf8");
 const resetPasswordPage = readFileSync(resolve(process.cwd(), "src/app/reset-password/page.tsx"), "utf8");
+const recoveryRoute = readFileSync(resolve(process.cwd(), "src/app/auth/recovery/route.ts"), "utf8");
 
 test("cloud error code 維持封閉集合", () => assert.equal(CloudErrorCodeSchema.safeParse("CLOUD_INTERNAL_ERROR").success, true));
-test("忘記密碼回呼導向設定新密碼頁", () => assert.match(authForm, /auth\/callback\$\{mode === "forgot" \? "\?next=%2Freset-password" : ""\}/));
+test("忘記密碼使用專用復原回呼", () => assert.match(authForm, /mode === "forgot" \? "\/auth\/recovery" : "\/auth\/callback"/));
 test("設定新密碼頁要求已驗證 Session", () => { assert.match(resetPasswordPage, /getVerifiedClaims\(\)/); assert.match(resetPasswordPage, /redirect\("\/login\?next=\/reset-password"\)/); });
 test("設定新密碼僅透過 Supabase 更新密碼", () => assert.match(resetPasswordForm, /client\.auth\.updateUser\(\{ password \}\)/));
 test("設定新密碼不洩漏 Supabase 原始錯誤", () => assert.doesNotMatch(resetPasswordForm, /error\.message|error\.details|error\.hint/));
+test("復原回呼固定導向設定新密碼頁", () => assert.match(recoveryRoute, /new URL\("\/reset-password", url\.origin\)/));
+test("復原回呼同時支援 PKCE code 與 recovery token hash", () => { assert.match(recoveryRoute, /exchangeCodeForSession\(code\)/); assert.match(recoveryRoute, /verifyOtp\(\{ token_hash: tokenHash, type: "recovery" \}\)/); });
 test("未知 cloud error code 被拒絕", () => assert.equal(CloudErrorCodeSchema.safeParse("SQL_ERROR").success, false));
 test("cloud mutation 不接受無 payload", () => assert.equal(CloudMutationSchema.safeParse({}).success, false));
 test("cloud mutation 不接受負 revision", () => assert.equal(CloudMutationSchema.safeParse({ payload: {}, expectedRevision: -1 }).success, false));

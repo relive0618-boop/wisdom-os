@@ -11,7 +11,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" | "forgot" }) {
   async function run(action: "password" | "magic") {
     if (!client) return setMessage("雲端帳號尚未啟用；本地決策與歷史功能仍可使用。");
     if (mode === "signup" && password !== confirm) return setMessage("兩次密碼不一致。");
-    setLoading(true); setMessage(""); const redirectTo = `${window.location.origin}/auth/callback${mode === "forgot" ? "?next=%2Freset-password" : ""}`;
+    setLoading(true); setMessage(""); const redirectTo = `${window.location.origin}${mode === "forgot" ? "/auth/recovery" : "/auth/callback"}`;
     try {
       const result = action === "magic" ? await client.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo } }) : mode === "login" ? await client.auth.signInWithPassword({ email, password }) : mode === "signup" ? await client.auth.signUp({ email, password, options: { emailRedirectTo: redirectTo } }) : await client.auth.resetPasswordForEmail(email, { redirectTo });
       if (result.error) setMessage("無法完成帳號操作，請檢查資料、驗證信或稍後重試。");
