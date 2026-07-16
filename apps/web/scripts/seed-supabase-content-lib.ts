@@ -14,8 +14,8 @@ type SeedRow = { id: string; payload: Record<string, unknown>; status: "publishe
 export type SeedDataset = { knowledge: unknown; cases: unknown };
 export type SeedValidation = { knowledgeEntries: number; caseEntries: number; uniqueIds: number; crossTableIdCollisions: number; duplicateIds: number; invalidEntries: number; valid: boolean };
 export type SeedTableResult = { table: SeedTable; expected: number; confirmed: number; success: boolean; errorCode: SeedErrorCode | null; httpStatus: number | null; providerCode: string | null; phase: SeedPhase };
-export type SeedApplyResult = { success: boolean; knowledge: SeedTableResult; cases: SeedTableResult; remoteWrites: number };
-export type SeedQueryResult = { data: unknown; error: unknown; status?: number; statusText?: string };
+export type SeedApplyResult = { success: boolean; knowledge: SeedTableResult; cases: SeedTableResult; upsertCallsAttempted: number; remoteRowsConfirmed: number };
+export type SeedQueryResult = { data: unknown; error: unknown; status: number; statusText: string };
 export type SeedClient = { probe: (table: SeedTable) => Promise<SeedQueryResult>; upsert: (table: SeedTable, rows: SeedRow[]) => Promise<SeedQueryResult>; verify: (table: SeedTable, ids: string[]) => Promise<SeedQueryResult> };
 
 export class SeedUsageError extends Error { constructor() { super("SEED_USAGE_REQUIRED"); } }
@@ -77,8 +77,11 @@ export function formatDryRun(validation: SeedValidation): string {
   return [`Seed dry-run: ${validation.valid ? "SAFE" : "FAILED"}`, `Knowledge entries: ${validation.knowledgeEntries}`, `Case entries: ${validation.caseEntries}`, `Unique IDs: ${validation.uniqueIds}`, `Cross-table ID collisions: ${validation.crossTableIdCollisions} (allowed: separate tables)`, `Duplicate IDs: ${validation.duplicateIds}`, `Invalid entries: ${validation.invalidEntries}`, "Remote writes: 0"].join("\n");
 }
 
-function resultIsSuccessful(result: SeedQueryResult): boolean { return !result.error && (result.status === undefined || (result.status >= 200 && result.status < 300)) && (result.statusText === undefined || typeof result.statusText === "string"); }
+function resultIsSuccessful(result: SeedQueryResult): boolean { return !result.error && result.status >= 200 && result.status < 300 && typeof result.statusText === "string"; }
 function safeHttpStatus(status: unknown): number | null { return typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599 ? status : null; }
+export function normalizeNativeQueryResult(result: { data: unknown; error: unknown; status: number; statusText: string }): SeedQueryResult {
+  return { data: result.data, error: result.error, status: result.status, statusText: result.statusText };
+}
 function rawProviderCode(error: unknown): string | null {
   if (!error || typeof error !== "object" || typeof (error as { code?: unknown }).code !== "string") return null;
   return (error as { code: string }).code;
@@ -89,6 +92,7 @@ function safeProviderCode(error: unknown): string | null {
 }
 function classifyFailure(result: SeedQueryResult, fallback: SeedErrorCode): SeedErrorCode {
   const status = safeHttpStatus(result.status); const code = rawProviderCode(result.error);
+  if (result.error && status === null && !code) return "SEED_NETWORK_FAILED";
   if (status === 401) return "SEED_AUTH_FAILED";
   if (status === 403 || code === "42501") return "SEED_PERMISSION_DENIED";
   if (status === 404 || code === "PGRST205" || code === "42P01") return "SEED_TABLE_NOT_EXPOSED";
@@ -123,21 +127,21 @@ async function applyTable(client: SeedClient, table: SeedTable, rows: SeedRow[])
 
 export async function applySeed(client: SeedClient, validation: ReturnType<typeof validateSeedData>): Promise<SeedApplyResult> {
   const skipped = (table: SeedTable, expected: number, phase: SeedPhase = "client_init") => failedResult(table, expected, 0, phase, "SEED_SKIPPED_AFTER_FAILURE");
-  if (!validation.valid) return { success: false, knowledge: failedResult("knowledge_entries", validation.knowledgeEntries, 0, "client_init", "SEED_VALIDATION_FAILED"), cases: failedResult("case_entries", validation.caseEntries, 0, "client_init", "SEED_VALIDATION_FAILED"), remoteWrites: 0 };
+  if (!validation.valid) return { success: false, knowledge: failedResult("knowledge_entries", validation.knowledgeEntries, 0, "client_init", "SEED_VALIDATION_FAILED"), cases: failedResult("case_entries", validation.caseEntries, 0, "client_init", "SEED_VALIDATION_FAILED"), upsertCallsAttempted: 0, remoteRowsConfirmed: 0 };
   let knowledgeProbe: SeedQueryResult;
-  try { knowledgeProbe = await client.probe("knowledge_entries"); } catch { return { success: false, knowledge: failedResult("knowledge_entries", validation.knowledgeEntries, 0, "client_init", "SEED_NETWORK_FAILED"), cases: skipped("case_entries", validation.caseEntries), remoteWrites: 0 }; }
-  if (!resultIsSuccessful(knowledgeProbe)) return { success: false, knowledge: failedResult("knowledge_entries", validation.knowledgeEntries, 0, "client_init", "SEED_UPSERT_FAILED", knowledgeProbe), cases: skipped("case_entries", validation.caseEntries), remoteWrites: 0 };
+  try { knowledgeProbe = await client.probe("knowledge_entries"); } catch { return { success: false, knowledge: failedResult("knowledge_entries", validation.knowledgeEntries, 0, "client_init", "SEED_NETWORK_FAILED"), cases: skipped("case_entries", validation.caseEntries), upsertCallsAttempted: 0, remoteRowsConfirmed: 0 }; }
+  if (!resultIsSuccessful(knowledgeProbe)) return { success: false, knowledge: failedResult("knowledge_entries", validation.knowledgeEntries, 0, "client_init", "SEED_UPSERT_FAILED", knowledgeProbe), cases: skipped("case_entries", validation.caseEntries), upsertCallsAttempted: 0, remoteRowsConfirmed: 0 };
   let casesProbe: SeedQueryResult;
-  try { casesProbe = await client.probe("case_entries"); } catch { return { success: false, knowledge: skipped("knowledge_entries", validation.knowledgeEntries), cases: failedResult("case_entries", validation.caseEntries, 0, "client_init", "SEED_NETWORK_FAILED"), remoteWrites: 0 }; }
-  if (!resultIsSuccessful(casesProbe)) return { success: false, knowledge: skipped("knowledge_entries", validation.knowledgeEntries), cases: failedResult("case_entries", validation.caseEntries, 0, "client_init", "SEED_UPSERT_FAILED", casesProbe), remoteWrites: 0 };
+  try { casesProbe = await client.probe("case_entries"); } catch { return { success: false, knowledge: skipped("knowledge_entries", validation.knowledgeEntries), cases: failedResult("case_entries", validation.caseEntries, 0, "client_init", "SEED_NETWORK_FAILED"), upsertCallsAttempted: 0, remoteRowsConfirmed: 0 }; }
+  if (!resultIsSuccessful(casesProbe)) return { success: false, knowledge: skipped("knowledge_entries", validation.knowledgeEntries), cases: failedResult("case_entries", validation.caseEntries, 0, "client_init", "SEED_UPSERT_FAILED", casesProbe), upsertCallsAttempted: 0, remoteRowsConfirmed: 0 };
   const knowledge = await applyTable(client, "knowledge_entries", validation.knowledgeRows);
-  if (!knowledge.success) return { success: false, knowledge, cases: skipped("case_entries", validation.caseEntries), remoteWrites: 1 };
+  if (!knowledge.success) return { success: false, knowledge, cases: skipped("case_entries", validation.caseEntries), upsertCallsAttempted: 1, remoteRowsConfirmed: knowledge.confirmed };
   const cases = await applyTable(client, "case_entries", validation.caseRows);
-  return { success: knowledge.success && cases.success, knowledge, cases, remoteWrites: 2 };
+  return { success: knowledge.success && cases.success, knowledge, cases, upsertCallsAttempted: 2, remoteRowsConfirmed: knowledge.confirmed + cases.confirmed };
 }
 
 export function formatApplyResult(result: SeedApplyResult): string {
   const state = result.success ? "SAFE" : "FAILED";
   const details = (label: string, item: SeedTableResult) => [`${label}: ${item.success ? "SUCCESS" : "FAILED"} (${item.confirmed}/${item.expected})`, `${label} phase: ${item.phase}`, `${label} HTTP status: ${item.httpStatus ?? "NONE"}`, `${label} provider code: ${item.providerCode ?? "NONE"}`, `${label} error: ${item.errorCode ?? "NONE"}`];
-  return [`Seed apply: ${state}`, ...details("Knowledge", result.knowledge), ...details("Cases", result.cases), `Remote writes attempted: ${result.remoteWrites}`, "Writes are idempotent upserts and can be safely re-run after a partial failure."].join("\n");
+  return [`Seed apply: ${state}`, ...details("Knowledge", result.knowledge), ...details("Cases", result.cases), `Upsert calls attempted: ${result.upsertCallsAttempted}`, `Remote rows confirmed: ${result.remoteRowsConfirmed}`, "Writes are idempotent upserts and can be safely re-run after a partial failure."].join("\n");
 }

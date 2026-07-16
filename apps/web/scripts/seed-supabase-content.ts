@@ -1,10 +1,10 @@
 import knowledge from "../src/lib/knowledge.json" with { type: "json" };
 import cases from "../src/lib/cases.json" with { type: "json" };
-import { applyConfiguration, applySeed, formatApplyResult, formatDryRun, parseSeedMode, SeedError, SeedUsageError, type SeedClient, type SeedQueryResult, type SeedTable, validateSeedData } from "./seed-supabase-content-lib";
+import { applyConfiguration, applySeed, formatApplyResult, formatDryRun, normalizeNativeQueryResult, parseSeedMode, SeedError, SeedUsageError, type SeedClient, type SeedQueryResult, type SeedTable, validateSeedData } from "./seed-supabase-content-lib";
 
 const validation = validateSeedData({ knowledge, cases });
 const testHooks = process.env.NODE_ENV === "test";
-type QueryResult = PromiseLike<{ data: unknown; error: unknown }>;
+type QueryResult = PromiseLike<{ data: unknown; error: unknown; status: number; statusText: string }>;
 type SupabaseSeedClient = {
   from: (table: SeedTable) => {
     upsert: (rows: unknown[], options: { onConflict: string }) => { select: (columns: string) => QueryResult };
@@ -12,19 +12,21 @@ type SupabaseSeedClient = {
   };
 };
 
-function safePath(input: RequestInfo | URL): string | null {
+function testRequestUrl(input: RequestInfo | URL): URL | null {
   try {
-    if (typeof input === "string") return new URL(input).pathname;
-    if (input instanceof URL) return input.pathname;
-    if (typeof Request !== "undefined" && input instanceof Request) return new URL(input.url).pathname;
+    if (typeof input === "string") return new URL(input);
+    if (input instanceof URL) return input;
+    if (typeof Request !== "undefined" && input instanceof Request) return new URL(input.url);
     const url = typeof input === "object" && input && "url" in input ? (input as { url?: unknown }).url : null;
-    return typeof url === "string" ? new URL(url).pathname : null;
+    return typeof url === "string" ? new URL(url) : null;
   } catch { return null; }
 }
 
 function testFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   if (process.env.WISDOM_SEED_TEST_NETWORK_FAILURE === "1") return Promise.reject(new Error());
-  const path = safePath(input) ?? ""; const url = typeof input === "string" ? new URL(input) : input instanceof URL ? input : new URL(input.url);
+  const url = testRequestUrl(input);
+  const path = url?.pathname ?? "";
+  if (!url) return Promise.resolve(new Response("[]", { status: 400, statusText: "Bad Request" }));
   const ids = (url.searchParams.get("id")?.match(/\((.*)\)/)?.[1]?.split(",").filter(Boolean) ?? []);
   const method = init?.method ?? (input instanceof Request ? input.method : "GET");
   const data = method === "GET" ? ids.map((id) => ({ id, status: "published", deleted_at: null })) : [];
@@ -42,23 +44,20 @@ async function createApplyClient(): Promise<SeedClient> {
     ({ createClient } = await import("@supabase/supabase-js"));
   } catch { throw new SeedError("SEED_CLIENT_IMPORT_FAILED"); }
   if (testHooks && process.env.WISDOM_SEED_TEST_CLIENT_INIT_FAILURE === "1") throw new SeedError("SEED_CLIENT_INIT_FAILED");
-  const responses: Array<{ status: number; statusText: string }> = [];
-  const captureStatus: typeof fetch = async (input, init) => {
-    const response = await (testHooks && process.env.WISDOM_SEED_TEST_FETCH === "mock" ? testFetch(input, init) : fetch(input, init));
-    const pathname = safePath(input);
-    if (pathname?.endsWith("/knowledge_entries") || pathname?.endsWith("/case_entries")) responses.push({ status: response.status, statusText: response.statusText });
-    return response;
-  };
   try {
-    const client = createClient(url, secret, { auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false }, global: { fetch: captureStatus } }) as unknown as SupabaseSeedClient;
-    const withStatus = async (table: SeedTable, result: PromiseLike<{ data: unknown; error: unknown }>): Promise<SeedQueryResult> => {
-      const { data, error } = await result;
-      return { data, error, ...responses.shift() };
+    const auth = { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false };
+    const options = testHooks && process.env.WISDOM_SEED_TEST_FETCH === "mock"
+      ? { auth, global: { fetch: testFetch } }
+      : { auth };
+    const client = createClient(url, secret, options) as unknown as SupabaseSeedClient;
+    const withStatus = async (query: QueryResult): Promise<SeedQueryResult> => {
+      const result = await query;
+      return normalizeNativeQueryResult(result);
     };
     return {
-      probe: (table) => withStatus(table, client.from(table).select("id", { head: true }).limit(0)),
-      upsert: (table, rows) => withStatus(table, client.from(table).upsert(rows, { onConflict: "id" }).select("id,status,deleted_at")),
-      verify: (table, ids) => withStatus(table, client.from(table).select("id,status,deleted_at").in("id", ids)),
+      probe: (table) => withStatus(client.from(table).select("id", { head: true }).limit(0)),
+      upsert: (table, rows) => withStatus(client.from(table).upsert(rows, { onConflict: "id" }).select("id,status,deleted_at")),
+      verify: (table, ids) => withStatus(client.from(table).select("id,status,deleted_at").in("id", ids)),
     };
   } catch { throw new SeedError("SEED_CLIENT_INIT_FAILED"); }
 }

@@ -8,6 +8,7 @@ import {
   applySeed,
   formatApplyResult,
   formatDryRun,
+  normalizeNativeQueryResult,
   parseSeedMode,
   type SeedClient,
   validateSeedData,
@@ -107,6 +108,8 @@ test("apply 成功後核對遠端 ID 與數量", async () => {
   assert.equal(result.success, true);
   assert.equal(result.knowledge.confirmed, 1);
   assert.equal(result.cases.confirmed, 1);
+  assert.equal(result.upsertCallsAttempted, 2);
+  assert.equal(result.remoteRowsConfirmed, 2);
   assert.deepEqual(client.calls, ["probe:knowledge_entries", "probe:case_entries", "upsert:knowledge_entries:1", "verify:knowledge_entries:1", "upsert:case_entries:1", "verify:case_entries:1"]);
 });
 test("knowledge upsert error 被安全捕捉且停止後續寫入", async () => {
@@ -115,6 +118,8 @@ test("knowledge upsert error 被安全捕捉且停止後續寫入", async () => 
   assert.equal(result.success, false);
   assert.equal(result.knowledge.errorCode, "SEED_REQUEST_INVALID");
   assert.equal(result.cases.errorCode, "SEED_SKIPPED_AFTER_FAILURE");
+  assert.equal(result.upsertCallsAttempted, 1);
+  assert.equal(result.remoteRowsConfirmed, 0);
   assert.deepEqual(client.calls, ["probe:knowledge_entries", "probe:case_entries", "upsert:knowledge_entries:1"]);
 });
 test("case upsert error 被安全捕捉且不謊稱整體成功", async () => {
@@ -123,6 +128,8 @@ test("case upsert error 被安全捕捉且不謊稱整體成功", async () => {
   assert.equal(result.success, false);
   assert.equal(result.knowledge.success, true);
   assert.equal(result.cases.errorCode, "SEED_REQUEST_INVALID");
+  assert.equal(result.upsertCallsAttempted, 2);
+  assert.equal(result.remoteRowsConfirmed, 1);
   assert.match(formatApplyResult(result), /Seed apply: FAILED/);
 });
 test("遠端核對不完整被視為失敗", async () => {
@@ -158,13 +165,43 @@ function diagnosticClient(status: number, code: string | null): SeedClient & { c
 for (const [status, code, expected] of [[401, null, "SEED_AUTH_FAILED"], [403, "42501", "SEED_PERMISSION_DENIED"], [404, "PGRST205", "SEED_TABLE_NOT_EXPOSED"], [409, "23505", "SEED_CONFLICT_FAILED"], [500, null, "SEED_PROVIDER_UNAVAILABLE"]] as const) {
   test(`probe ${status} 安全分類為 ${expected}`, async () => {
     const client = diagnosticClient(status, code); const result = await applySeed(client, validateSeedData(validData()));
-    assert.equal(result.knowledge.errorCode, expected); assert.equal(result.knowledge.httpStatus, status); assert.equal(result.knowledge.providerCode, code); assert.equal(result.knowledge.phase, "client_init"); assert.equal(result.remoteWrites, 0); assert.deepEqual(client.calls, ["probe:knowledge_entries"]);
+    assert.equal(result.knowledge.errorCode, expected); assert.equal(result.knowledge.httpStatus, status); assert.equal(result.knowledge.providerCode, code); assert.equal(result.knowledge.phase, "client_init"); assert.equal(result.upsertCallsAttempted, 0); assert.equal(result.remoteRowsConfirmed, 0); assert.deepEqual(client.calls, ["probe:knowledge_entries"]);
   });
 }
 test("probe network throw 為 SEED_NETWORK_FAILED 且零寫入", async () => {
   const client: SeedClient = { probe: async () => { throw new Error(); }, upsert: async () => ({ data: null, error: null, status: 200, statusText: "OK" }), verify: async () => ({ data: [], error: null, status: 200, statusText: "OK" }) };
   const result = await applySeed(client, validateSeedData(validData()));
-  assert.equal(result.knowledge.errorCode, "SEED_NETWORK_FAILED"); assert.equal(result.remoteWrites, 0);
+  assert.equal(result.knowledge.errorCode, "SEED_NETWORK_FAILED"); assert.equal(result.upsertCallsAttempted, 0); assert.equal(result.remoteRowsConfirmed, 0);
+});
+test("原生 query status 與 statusText 會完整保留", () => {
+  const result = normalizeNativeQueryResult({ data: null, error: { code: "42501" }, status: 401, statusText: "Unauthorized" });
+  assert.equal(result.status, 401);
+  assert.equal(result.statusText, "Unauthorized");
+  assert.equal((result.error as { code: string }).code, "42501");
+});
+test("status 為 0 且沒有 provider code 安全分類為網路失敗", async () => {
+  const client = diagnosticClient(0, null);
+  const result = await applySeed(client, validateSeedData(validData()));
+  assert.equal(result.knowledge.errorCode, "SEED_NETWORK_FAILED");
+  assert.equal(result.knowledge.httpStatus, null);
+  assert.equal(result.knowledge.providerCode, null);
+});
+test("apply 摘要分開呈現 upsert 呼叫與遠端已確認資料列", async () => {
+  const result = await applySeed(successfulClient({ failKnowledge: true }), validateSeedData(validData()));
+  const output = formatApplyResult(result);
+  assert.match(output, /Upsert calls attempted: 1/);
+  assert.match(output, /Remote rows confirmed: 0/);
+  assert.doesNotMatch(output, /Remote writes attempted/);
+});
+test("runner 不使用 FIFO 狀態佇列或 request 路徑猜測", () => {
+  const source = readFileSync(resolve(process.cwd(), "scripts/seed-supabase-content.ts"), "utf8");
+  assert.doesNotMatch(source, /responses\s*[:=]|\.push\(|\.shift\(|captureStatus|safePath/);
+});
+test("production 使用 Supabase 原生 transport，mock fetch 僅限明確測試模式", () => {
+  const source = readFileSync(resolve(process.cwd(), "scripts/seed-supabase-content.ts"), "utf8");
+  assert.match(source, /testHooks && process\.env\.WISDOM_SEED_TEST_FETCH === "mock"/);
+  assert.match(source, /\? \{ auth, global: \{ fetch: testFetch \} \}\s*:\s*\{ auth \}/);
+  assert.doesNotMatch(source, /new Request\s*\(|\.body\s*=/);
 });
 test("安全診斷不輸出 provider message details 或 hint", async () => {
   const result = await applySeed(diagnosticClient(404, "PGRST205"), validateSeedData(validData())); const output = formatApplyResult(result);
