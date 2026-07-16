@@ -14,8 +14,15 @@ import { resolveConflict } from "./sync/conflictResolver";
 import { migrationProgress } from "./sync/migrationRunner";
 
 const migration = readFileSync(resolve(process.cwd(), "../../supabase/migrations/20260715_wisdom_os_v04.sql"), "utf8");
+const authForm = readFileSync(resolve(process.cwd(), "src/components/auth/AuthForm.tsx"), "utf8");
+const resetPasswordForm = readFileSync(resolve(process.cwd(), "src/components/auth/ResetPasswordForm.tsx"), "utf8");
+const resetPasswordPage = readFileSync(resolve(process.cwd(), "src/app/reset-password/page.tsx"), "utf8");
 
 test("cloud error code 維持封閉集合", () => assert.equal(CloudErrorCodeSchema.safeParse("CLOUD_INTERNAL_ERROR").success, true));
+test("忘記密碼回呼導向設定新密碼頁", () => assert.match(authForm, /auth\/callback\$\{mode === "forgot" \? "\?next=%2Freset-password" : ""\}/));
+test("設定新密碼頁要求已驗證 Session", () => { assert.match(resetPasswordPage, /getVerifiedClaims\(\)/); assert.match(resetPasswordPage, /redirect\("\/login\?next=\/reset-password"\)/); });
+test("設定新密碼僅透過 Supabase 更新密碼", () => assert.match(resetPasswordForm, /client\.auth\.updateUser\(\{ password \}\)/));
+test("設定新密碼不洩漏 Supabase 原始錯誤", () => assert.doesNotMatch(resetPasswordForm, /error\.message|error\.details|error\.hint/));
 test("未知 cloud error code 被拒絕", () => assert.equal(CloudErrorCodeSchema.safeParse("SQL_ERROR").success, false));
 test("cloud mutation 不接受無 payload", () => assert.equal(CloudMutationSchema.safeParse({}).success, false));
 test("cloud mutation 不接受負 revision", () => assert.equal(CloudMutationSchema.safeParse({ payload: {}, expectedRevision: -1 }).success, false));
