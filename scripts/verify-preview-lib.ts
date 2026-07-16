@@ -1,23 +1,43 @@
+import { execFile } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
 export type PreviewCheck = { name: string; passed: boolean; code: string };
 export type PreviewVerification = { passed: boolean; checks: PreviewCheck[] };
-export type PreviewVerifierOptions = { baseUrl: string; allowLocal?: boolean; timeoutMs?: number; fetchImpl?: typeof fetch };
+export type PreviewTransport = "fetch" | "vercel-curl";
+export type VercelCurlExecutor = (file: string, args: string[], options: { cwd: string; timeout: number; maxBuffer: number; windowsHide: boolean }) => Promise<{ stdout: string }>;
+export type PreviewVerifierOptions = { baseUrl: string; allowLocal?: boolean; timeoutMs?: number; fetchImpl?: typeof fetch; transport?: PreviewTransport; vercelExec?: VercelCurlExecutor };
 
 const expectedKnowledgeEntries = 56;
 const expectedCaseEntries = 30;
 const defaultTimeoutMs = 10_000;
+const vercelTimeoutMs = 15_000;
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const previewPaths = ["/api/health", "/api/knowledge", "/api/cases", "/api/cloud/reports", "/api/cloud/pdca", "/api/admin/content/knowledge"] as const;
+type PreviewPath = (typeof previewPaths)[number];
+type TransportFailure = "TIMEOUT" | "NETWORK_FAILED" | "VERCEL_CURL_UNAVAILABLE" | "VERCEL_CURL_AUTH_FAILED" | "VERCEL_CURL_REQUEST_FAILED" | "VERCEL_CURL_STATUS_INVALID" | "VERCEL_CURL_JSON_INVALID";
+const execFileAsync = promisify(execFile);
 
 export class PreviewVerifierUsageError extends Error {
   constructor() { super("PREVIEW_VERIFIER_USAGE"); }
 }
 
-export function parsePreviewVerifierArgs(args: string[]): { baseUrl: string; allowLocal: boolean } {
+export function parsePreviewVerifierArgs(inputArgs: string[]): { baseUrl: string; allowLocal: boolean; transport: PreviewTransport } {
+  const args = inputArgs[0] === "--" ? inputArgs.slice(1) : inputArgs;
   let baseUrl: string | null = null;
   let allowLocal = false;
+  let transport: PreviewTransport = "fetch";
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--allow-local") {
       if (allowLocal) throw new PreviewVerifierUsageError();
       allowLocal = true;
+      continue;
+    }
+    if (argument === "--vercel-protected") {
+      if (transport === "vercel-curl") throw new PreviewVerifierUsageError();
+      transport = "vercel-curl";
       continue;
     }
     if (argument === "--base-url" && !baseUrl && typeof args[index + 1] === "string") {
@@ -27,8 +47,8 @@ export function parsePreviewVerifierArgs(args: string[]): { baseUrl: string; all
     }
     throw new PreviewVerifierUsageError();
   }
-  if (!baseUrl) throw new PreviewVerifierUsageError();
-  return { baseUrl, allowLocal };
+  if (!baseUrl || (allowLocal && transport === "vercel-curl")) throw new PreviewVerifierUsageError();
+  return { baseUrl, allowLocal, transport };
 }
 
 export function normalizePreviewBaseUrl(value: string, allowLocal = false): string {
@@ -60,7 +80,7 @@ function hasUnpublishedContent(value: unknown): boolean {
   return Object.values(value).some(hasUnpublishedContent);
 }
 
-type SafeResponse = { response: Response | null; json: unknown; failure: "TIMEOUT" | "NETWORK_FAILED" | null };
+type SafeResponse = { status: number | null; contentType: string | null; json: unknown; failure: TransportFailure | null };
 
 async function getJson(fetchImpl: typeof fetch, url: string, timeoutMs: number): Promise<SafeResponse> {
   const controller = new AbortController();
@@ -72,34 +92,76 @@ async function getJson(fetchImpl: typeof fetch, url: string, timeoutMs: number):
     });
     const response = await Promise.race([fetchImpl(url, { method: "GET", headers: { accept: "application/json" }, signal: controller.signal }), timeoutPromise]);
     const contentType = response.headers.get("content-type") ?? "";
-    if (!contentType.toLowerCase().includes("application/json")) return { response, json: null, failure: null };
-    try { return { response, json: await response.json(), failure: null }; } catch { return { response, json: null, failure: null }; }
+    if (!contentType.toLowerCase().includes("application/json")) return { status: response.status, contentType, json: null, failure: null };
+    try { return { status: response.status, contentType, json: await response.json(), failure: null }; } catch { return { status: response.status, contentType, json: null, failure: null }; }
   } catch {
-    return { response: null, json: null, failure: timeout ? "TIMEOUT" : "NETWORK_FAILED" };
+    return { status: null, contentType: null, json: null, failure: timeout ? "TIMEOUT" : "NETWORK_FAILED" };
   } finally { if (timer) clearTimeout(timer); }
 }
 
 function responseCheck(name: string, result: SafeResponse, statuses: number[]): PreviewCheck {
   if (result.failure) return check(name, false, result.failure);
-  if (!result.response) return check(name, false, "NETWORK_FAILED");
-  const contentType = result.response.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().includes("application/json")) return check(name, false, "CONTENT_TYPE_INVALID");
-  return check(name, statuses.includes(result.response.status), safeStatus(result.response.status));
+  if (result.status === null) return check(name, false, "NETWORK_FAILED");
+  if (!result.contentType?.toLowerCase().includes("application/json")) return check(name, false, "CONTENT_TYPE_INVALID");
+  return check(name, statuses.includes(result.status), safeStatus(result.status));
+}
+
+const systemVercelExec: VercelCurlExecutor = async (file, args, options) => {
+  const result = await execFileAsync(file, args, options);
+  return { stdout: String(result.stdout) };
+};
+
+function isMissingExecutable(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "ENOENT");
+}
+
+async function verifyVercelAccess(executor: VercelCurlExecutor): Promise<TransportFailure | null> {
+  try {
+    const result = await executor("vercel", ["whoami"], { cwd: repositoryRoot, timeout: vercelTimeoutMs, maxBuffer: 1024 * 1024, windowsHide: true });
+    return result.stdout.trim() ? null : "VERCEL_CURL_AUTH_FAILED";
+  } catch (error) {
+    return isMissingExecutable(error) ? "VERCEL_CURL_UNAVAILABLE" : "VERCEL_CURL_AUTH_FAILED";
+  }
+}
+
+function parseVercelCurlOutput(stdout: string): { status: number; contentType: string; json: unknown } | TransportFailure {
+  const marker = /(?:^|\n)__WISDOM_HTTP_STATUS__:(\d{3})\r?\n__WISDOM_CONTENT_TYPE__:([^\r\n]*)\s*$/;
+  const match = marker.exec(stdout);
+  if (!match) return "VERCEL_CURL_STATUS_INVALID";
+  const status = Number(match[1]);
+  if (!Number.isInteger(status) || status < 100 || status > 599) return "VERCEL_CURL_STATUS_INVALID";
+  const body = stdout.slice(0, match.index).trim();
+  try { return { status, contentType: match[2].trim(), json: JSON.parse(body) }; } catch { return "VERCEL_CURL_JSON_INVALID"; }
+}
+
+async function getProtectedJson(executor: VercelCurlExecutor, baseUrl: string, path: PreviewPath): Promise<SafeResponse> {
+  const args = [
+    "curl", path, "--deployment", baseUrl, "--", "--silent", "--show-error", "--location",
+    "--write-out", "\n__WISDOM_HTTP_STATUS__:%{http_code}\n__WISDOM_CONTENT_TYPE__:%{content_type}\n",
+  ];
+  try {
+    const parsed = parseVercelCurlOutput((await executor("vercel", args, { cwd: repositoryRoot, timeout: vercelTimeoutMs, maxBuffer: 1024 * 1024, windowsHide: true })).stdout);
+    if (typeof parsed === "string") return { status: null, contentType: null, json: null, failure: parsed };
+    return { ...parsed, failure: null };
+  } catch (error) {
+    return { status: null, contentType: null, json: null, failure: isMissingExecutable(error) ? "VERCEL_CURL_UNAVAILABLE" : "VERCEL_CURL_REQUEST_FAILED" };
+  }
 }
 
 export async function verifyPreview(options: PreviewVerifierOptions): Promise<PreviewVerification> {
+  const transport = options.transport ?? "fetch";
+  if (transport === "vercel-curl" && options.allowLocal) throw new PreviewVerifierUsageError();
   const baseUrl = normalizePreviewBaseUrl(options.baseUrl, options.allowLocal);
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? defaultTimeoutMs;
-  const requests = await Promise.all([
-    getJson(fetchImpl, `${baseUrl}/api/health`, timeoutMs),
-    getJson(fetchImpl, `${baseUrl}/api/knowledge`, timeoutMs),
-    getJson(fetchImpl, `${baseUrl}/api/cases`, timeoutMs),
-    getJson(fetchImpl, `${baseUrl}/api/cloud/reports`, timeoutMs),
-    getJson(fetchImpl, `${baseUrl}/api/cloud/pdca`, timeoutMs),
-    getJson(fetchImpl, `${baseUrl}/api/admin/content/knowledge`, timeoutMs),
-  ]);
-  const [health, knowledge, cases, reports, pdca, admin] = requests;
+  const executor = options.vercelExec ?? systemVercelExec;
+  const accessFailure = transport === "vercel-curl" ? await verifyVercelAccess(executor) : null;
+  const requests = accessFailure
+    ? previewPaths.map(() => Promise.resolve({ status: null, contentType: null, json: null, failure: accessFailure }))
+    : transport === "vercel-curl"
+      ? previewPaths.map((path) => getProtectedJson(executor, baseUrl, path))
+      : previewPaths.map((path) => getJson(fetchImpl, `${baseUrl}${path}`, timeoutMs));
+  const [health, knowledge, cases, reports, pdca, admin] = await Promise.all(requests);
   const checks: PreviewCheck[] = [
     responseCheck("health", health, [200]),
     responseCheck("knowledge", knowledge, [200]),

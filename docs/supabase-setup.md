@@ -21,3 +21,5 @@ pnpm verify:preview -- --base-url <PREVIEW_URL>
 ```
 
 工具只发送 GET，检查 health、56 条知识、30 个案例、未登入 cloud/admin API 拒绝与 response 安全边界；它不读取 Secret、不会登入、建立帐号或写入 Supabase。完整人工验收流程见 `docs/v0.4-preview-live-verification.md`。
+
+pnpm script 的 `--` 是参数分隔符，verifier 只会忽略最前方的单一分隔符。若 Preview 启用 Vercel Deployment Protection，可在同一命令后加入 `--vercel-protected`；该模式仅以官方 `vercel curl` 对固定 endpoint 发送 GET，并依当前 CLI 登录状态自动处理临时存取，不会建立、保存或显示 bypass 凭证。

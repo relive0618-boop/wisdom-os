@@ -139,6 +139,8 @@ pnpm verify:preview -- --base-url <PREVIEW_URL>
 
 它只接受 HTTPS URL（本机须额外传 `--allow-local`）、只发送 GET，不读取任何 server secret，也不会建立帐号、登入或改动云端资料。
 
+通过 pnpm script 传参时，`--` 是参数分隔符，verifier 会安全忽略最前方的单一分隔符。若 Preview 受 Vercel Deployment Protection 保护，可额外传 `--vercel-protected`，让官方 `vercel curl` 使用当前 Vercel CLI 登录状态进行只读 GET；不会保存、显示或手动传递任何 Protection 凭证。
+
 ## 路线图
 
 - [x] 决策分析引擎（56 条孙子兵法知识）
