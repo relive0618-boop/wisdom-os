@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { AnalyzeInputSchema, CloudErrorCodeSchema, CloudMutationSchema, SyncMetadataSchema, SyncPushRequestSchema } from "@wisdom/shared";
-import { conflictDuplicateId, stableHash, SYNC_BATCH_SIZE } from "./cloud/sync";
+import { conflictDuplicateId, metadataEntityId, stableHash, syncPush, SYNC_BATCH_SIZE } from "./cloud/sync";
 import { claimsAreAdmin, claimsUserId } from "./supabase/claims";
 import { adminAuthorization } from "./admin/authorization";
 import { canEdit, canTransition } from "./admin/contentTransitions";
@@ -21,6 +21,8 @@ const callbackRoute = readFileSync(resolve(process.cwd(), "src/app/auth/callback
 const recoveryRoute = readFileSync(resolve(process.cwd(), "src/app/auth/recovery/route.ts"), "utf8");
 const routeClient = readFileSync(resolve(process.cwd(), "src/lib/supabase/route.ts"), "utf8");
 const browserClient = readFileSync(resolve(process.cwd(), "src/lib/supabase/client.ts"), "utf8");
+const syncPage = readFileSync(resolve(process.cwd(), "src/app/sync/page.tsx"), "utf8");
+const syncPushRoute = readFileSync(resolve(process.cwd(), "src/app/api/cloud/sync/push/route.ts"), "utf8");
 
 test("cloud error code 維持封閉集合", () => assert.equal(CloudErrorCodeSchema.safeParse("CLOUD_INTERNAL_ERROR").success, true));
 test("忘記密碼導向 server recovery route 建立 session", () => assert.match(authForm, /mode === "forgot" \? "\/auth\/recovery\?next=%2Freset-password" : "\/auth\/callback"/));
@@ -49,6 +51,22 @@ test("stable hash 不同輸入不同", async () => assert.notEqual(await stableH
 test("duplicate id 保留來源識別", () => assert.match(conflictDuplicateId("report-a"), /^report-a-copy-/));
 test("sync batch size 固定 25", () => assert.equal(SYNC_BATCH_SIZE, 25));
 test("sync push 最多 25 entities", () => { const entities = Array.from({ length: 26 }, (_, index) => ({ entityType: "report" as const, entityId: String(index), payload: {}, hash: "a".repeat(64) })); assert.equal(SyncPushRequestSchema.safeParse({ deviceId: "d", entities }).success, false); });
+test("同步 metadata 以資料類型區隔相同 ID", () => { assert.equal(metadataEntityId("report", "same"), "report:same"); assert.equal(metadataEntityId("pdca", "same"), "pdca:same"); });
+test("手動同步會送出本機資料並保留伺服器 revision", async () => {
+  let received: unknown = null;
+  const results = await syncPush("device-1", [{ entityType: "report", entityId: "report-1", payload: { safe: true }, revision: null, updatedAt: "2026-07-17T00:00:00.000Z", deletedAt: null, deviceId: "device-1" }], async (_input, init) => {
+    received = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ results: [{ entityType: "report", entityId: "report-1", success: true, operation: "upload_create", cloudRevision: 1, errorCode: null }] }), { status: 200 });
+  });
+  assert.equal((received as { entities: Array<{ hash: string }> }).entities[0].hash.length, 64);
+  assert.deepEqual(results.map(({ entityId, success, cloudRevision }) => ({ entityId, success, cloudRevision })), [{ entityId: "report-1", success: true, cloudRevision: 1 }]);
+});
+test("手動同步保留單筆失敗，讓本機資料可稍後重試", async () => {
+  const results = await syncPush("device-1", [{ entityType: "pdca", entityId: "cycle-1", payload: { safe: true }, revision: 1, updatedAt: null, deletedAt: null, deviceId: "device-1" }], async () => new Response(JSON.stringify({ results: [{ entityType: "pdca", entityId: "cycle-1", success: false, operation: "upload_update", cloudRevision: 2, errorCode: "CLOUD_CONFLICT" }] }), { status: 200 }));
+  assert.deepEqual(results.map(({ success, errorCode, cloudRevision }) => ({ success, errorCode, cloudRevision })), [{ success: false, errorCode: "CLOUD_CONFLICT", cloudRevision: 2 }]);
+});
+test("同步頁會呼叫 push API，而不是只讀取狀態", () => { assert.match(syncPage, /syncPush\(deviceId, entities\)/); assert.doesNotMatch(syncPage, /fetch\("\/api\/cloud\/sync\/status"\)/); });
+test("批次 push 僅回傳安全 error code 與 revision", () => { assert.match(syncPushRoute, /CloudErrorCodeSchema\.safeParse/); assert.doesNotMatch(syncPushRoute, /error\.message|error\.details|error\.hint/); });
 test("sync metadata 接受 local_only", () => assert.equal(SyncMetadataSchema.safeParse({ entityId: "r", localUpdatedAt: new Date().toISOString(), cloudRevision: null, lastSyncedHash: null, lastSyncedAt: null, syncState: "local_only", source: "local", pendingOperation: "none" }).success, true));
 for (const state of ["pending_upload", "pending_download", "syncing", "synced", "conflict", "offline", "error"] as const) test(`sync metadata 支援 ${state}`, () => assert.equal(SyncMetadataSchema.safeParse({ entityId: state, localUpdatedAt: new Date().toISOString(), cloudRevision: null, lastSyncedHash: null, lastSyncedAt: null, syncState: state, source: "local", pendingOperation: "none" }).success, true));
 for (const operation of ["create", "update", "delete", "none"] as const) test(`sync metadata 支援 ${operation}`, () => assert.equal(SyncMetadataSchema.safeParse({ entityId: operation, localUpdatedAt: new Date().toISOString(), cloudRevision: null, lastSyncedHash: null, lastSyncedAt: null, syncState: "local_only", source: "local", pendingOperation: operation }).success, true));
