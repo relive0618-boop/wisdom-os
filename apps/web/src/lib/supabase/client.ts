@@ -10,6 +10,8 @@ let client: SupabaseClient | null | undefined;
 export function getBrowserSupabaseClient(): SupabaseClient | null {
   if (client !== undefined) return client;
   const config = supabaseConfig();
-  client = config.configured ? createBrowserClient(config.url!, config.publishableKey!) : null;
+  client = config.configured ? createBrowserClient(config.url!, config.publishableKey!, {
+    auth: { detectSessionInUrl: true },
+  }) : null;
   return client;
 }

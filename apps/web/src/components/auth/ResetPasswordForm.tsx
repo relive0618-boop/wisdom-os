@@ -36,16 +36,9 @@ export function ResetPasswordForm() {
         return;
       }
       const params = new URLSearchParams(window.location.search);
-      const code = params.get("code");
       const tokenHash = params.get("token_hash");
       const type = params.get("type");
-      if (code) {
-        const { error } = await client.auth.exchangeCodeForSession(code);
-        if (error) {
-          showInvalidLink();
-          return;
-        }
-      } else if (tokenHash && type === "recovery") {
+      if (tokenHash && type === "recovery") {
         const { error } = await client.auth.verifyOtp({ token_hash: tokenHash, type: "recovery" });
         if (error) {
           showInvalidLink();
@@ -55,10 +48,8 @@ export function ResetPasswordForm() {
       const { data } = await client.auth.getSession();
       if (data.session) {
         markReady();
-      } else if (!code && !tokenHash) {
-        timeoutId = window.setTimeout(showInvalidLink, 3000);
       } else {
-        showInvalidLink();
+        timeoutId = window.setTimeout(showInvalidLink, 3000);
       }
     }
 
@@ -67,8 +58,8 @@ export function ResetPasswordForm() {
       return () => { active = false; };
     }
 
-    const { data: { subscription } } = client.auth.onAuthStateChange((event, session) => {
-      if (session && (event === "PASSWORD_RECOVERY" || event === "INITIAL_SESSION")) markReady();
+    const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
+      if (session) markReady();
     });
     void verifyRecoverySession();
     return () => {
