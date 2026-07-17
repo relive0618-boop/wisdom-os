@@ -14,29 +14,68 @@ export function ResetPasswordForm() {
 
   useEffect(() => {
     let active = true;
+    let settled = false;
+    let timeoutId: number | undefined;
+
+    const showInvalidLink = () => {
+      if (active && !settled) setMessage("重設連結無效或已過期，請重新申請。");
+    };
+
+    const markReady = () => {
+      if (!active || settled) return;
+      settled = true;
+      if (timeoutId) window.clearTimeout(timeoutId);
+      window.history.replaceState({}, document.title, "/reset-password");
+      setMessage("");
+      setReady(true);
+    };
+
     async function verifyRecoverySession() {
       if (!client) {
         if (active) setMessage("雲端帳號尚未啟用；請稍後再試。");
         return;
       }
-      const code = new URLSearchParams(window.location.search).get("code");
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get("code");
+      const tokenHash = params.get("token_hash");
+      const type = params.get("type");
       if (code) {
         const { error } = await client.auth.exchangeCodeForSession(code);
         if (error) {
-          if (active) setMessage("重設連結無效或已過期，請重新申請。");
+          showInvalidLink();
+          return;
+        }
+      } else if (tokenHash && type === "recovery") {
+        const { error } = await client.auth.verifyOtp({ token_hash: tokenHash, type: "recovery" });
+        if (error) {
+          showInvalidLink();
           return;
         }
       }
-      const { data, error } = await client.auth.getUser();
-      if (!data.user || error) {
-        if (active) setMessage("重設連結無效或已過期，請重新申請。");
-        return;
+      const { data } = await client.auth.getSession();
+      if (data.session) {
+        markReady();
+      } else if (!code && !tokenHash) {
+        timeoutId = window.setTimeout(showInvalidLink, 3000);
+      } else {
+        showInvalidLink();
       }
-      window.history.replaceState({}, document.title, "/reset-password");
-      if (active) setReady(true);
     }
+
+    if (!client) {
+      void verifyRecoverySession();
+      return () => { active = false; };
+    }
+
+    const { data: { subscription } } = client.auth.onAuthStateChange((event, session) => {
+      if (session && (event === "PASSWORD_RECOVERY" || event === "INITIAL_SESSION")) markReady();
+    });
     void verifyRecoverySession();
-    return () => { active = false; };
+    return () => {
+      active = false;
+      if (timeoutId) window.clearTimeout(timeoutId);
+      subscription.unsubscribe();
+    };
   }, [client]);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {

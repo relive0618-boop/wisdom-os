@@ -22,11 +22,13 @@ const recoveryRoute = readFileSync(resolve(process.cwd(), "src/app/auth/recovery
 const routeClient = readFileSync(resolve(process.cwd(), "src/lib/supabase/route.ts"), "utf8");
 
 test("cloud error code 維持封閉集合", () => assert.equal(CloudErrorCodeSchema.safeParse("CLOUD_INTERNAL_ERROR").success, true));
-test("忘記密碼先經過 recovery callback 建立 session", () => assert.match(authForm, /mode === "forgot" \? "\/auth\/recovery\?next=%2Freset-password" : "\/auth\/callback"/));
+test("忘記密碼直接導向可接收 implicit flow 的重設頁", () => assert.match(authForm, /mode === "forgot" \? "\/reset-password" : "\/auth\/callback"/));
 test("設定新密碼頁不在伺服器端提前導向登入", () => assert.doesNotMatch(resetPasswordPage, /redirect\(|getVerifiedClaims\(/));
 test("設定新密碼僅透過 Supabase 更新密碼", () => assert.match(resetPasswordForm, /client\.auth\.updateUser\(\{ password \}\)/));
 test("設定新密碼不洩漏 Supabase 原始錯誤", () => assert.doesNotMatch(resetPasswordForm, /error\.message|error\.details|error\.hint/));
-test("設定新密碼頁交換 PKCE code 並驗證目前使用者", () => { assert.match(resetPasswordForm, /exchangeCodeForSession\(code\)/); assert.match(resetPasswordForm, /client\.auth\.getUser\(\)/); });
+test("設定新密碼頁交換 PKCE code 並驗證目前 session", () => { assert.match(resetPasswordForm, /exchangeCodeForSession\(code\)/); assert.match(resetPasswordForm, /client\.auth\.getSession\(\)/); });
+test("設定新密碼頁等待 implicit flow 的 PASSWORD_RECOVERY session", () => assert.match(resetPasswordForm, /event === "PASSWORD_RECOVERY"/));
+test("設定新密碼頁支援 recovery token hash", () => assert.match(resetPasswordForm, /verifyOtp\(\{ token_hash: tokenHash, type: "recovery" \}\)/));
 test("設定新密碼頁在驗證後移除網址憑證", () => assert.match(resetPasswordForm, /window\.history\.replaceState\(\{\}, document\.title, "\/reset-password"\)/));
 test("Auth callback 將 Supabase Session Cookie 寫入 redirect response", () => { assert.match(routeClient, /response\.cookies\.set\(name, value, options\)/); assert.match(callbackRoute, /getRouteSupabaseClient\(response\)/); });
 test("Recovery callback 支援 PKCE code 並將 session 寫入 redirect response", () => { assert.match(recoveryRoute, /exchangeCodeForSession\(code\)/); assert.match(recoveryRoute, /getRouteSupabaseClient\(response\)/); });
