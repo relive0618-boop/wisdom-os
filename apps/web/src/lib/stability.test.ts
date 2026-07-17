@@ -19,6 +19,7 @@ import {
   loadReport,
   migrateLastReport,
   migrateLegacyCycles,
+  restoreReport,
   saveReport,
 } from "./reportStore";
 import {
@@ -26,6 +27,7 @@ import {
   generateInitialItems,
   listCycles,
   loadCycle,
+  restoreCycle,
   saveCycle,
 } from "./pdca";
 import { POST as analyzePOST } from "../app/api/analyze/route";
@@ -193,6 +195,23 @@ test("reportStore 保存與讀取", () => {
   assert.equal(loadReport(response.reportId)?.reportId, response.reportId);
 });
 
+test("雲端還原報告只新增缺少的本機資料", () => {
+  resetStorage();
+  const response = makeResponse();
+  const restored = restoreReport(response, "2026-07-18T00:00:00.000Z");
+  assert.equal(restored.ok, true);
+  assert.equal(loadReport(response.reportId)?.createdAt, "2026-07-18T00:00:00.000Z");
+});
+
+test("雲端同 ID 報告不覆蓋本機資料", () => {
+  resetStorage();
+  const response = makeResponse();
+  const local = saveReport(response);
+  const restored = restoreReport(response, "2020-01-01T00:00:00.000Z");
+  assert.deepEqual(restored, { ok: false, code: "REPORT_ALREADY_EXISTS" });
+  assert.equal(loadReport(response.reportId)?.createdAt, local.createdAt);
+});
+
 test("相同標題產生不同 reportId", () => {
   resetStorage();
   const first = makeResponse();
@@ -264,6 +283,15 @@ test("PDCA 第二輪不覆蓋第一輪", () => {
   saveCycle(second);
   assert.equal(listCycles().length, 2);
   assert.ok(loadCycle(first.cycleId));
+});
+
+test("雲端同 ID PDCA 不覆蓋本機資料", () => {
+  resetStorage();
+  const response = makeResponse();
+  const cycle = createNewCycle(response.reportId, response.decisionId, "同步測試", "创业", [], 1, response.cycleId);
+  assert.deepEqual(restoreCycle(cycle), { ok: true });
+  assert.deepEqual(restoreCycle({ ...cycle, reportTitle: "雲端版本" }), { ok: false, code: "PDCA_CYCLE_ALREADY_EXISTS" });
+  assert.equal(loadCycle(cycle.cycleId)?.reportTitle, "同步測試");
 });
 
 test("未完成事項帶入下一輪", () => {

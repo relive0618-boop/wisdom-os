@@ -1,6 +1,14 @@
 "use client";
 
-import { SyncMetadataSchema, type SyncEntity, type SyncMetadata } from "@wisdom/shared";
+import {
+  CloudPdcaCycleSchema,
+  CloudReportSchema,
+  SyncMetadataSchema,
+  type CloudPdcaCycle,
+  type CloudReport,
+  type SyncEntity,
+  type SyncMetadata,
+} from "@wisdom/shared";
 
 export type SyncState = "idle" | "syncing" | "synced" | "offline" | "conflict" | "error";
 export const SYNC_BATCH_SIZE = 25;
@@ -18,6 +26,58 @@ export type SyncPushResult = {
   hash: string;
   updatedAt: string | null;
 };
+
+export type CloudSnapshot = {
+  reports: CloudReport[];
+  cycles: CloudPdcaCycle[];
+  invalidReports: number;
+  invalidCycles: number;
+};
+
+export type CloudRestorePlan = {
+  reports: CloudReport[];
+  cycles: CloudPdcaCycle[];
+  reportConflicts: string[];
+  cycleConflicts: string[];
+  invalid: number;
+};
+
+export function parseCloudSnapshot(value: unknown): CloudSnapshot {
+  if (!value || typeof value !== "object") return { reports: [], cycles: [], invalidReports: 0, invalidCycles: 0 };
+  const body = value as { reports?: unknown; cycles?: unknown; invalid?: { reports?: unknown; cycles?: unknown } };
+  const rawReports = Array.isArray(body.reports) ? body.reports : [];
+  const rawCycles = Array.isArray(body.cycles) ? body.cycles : [];
+  const reports = rawReports.flatMap((item) => {
+    const parsed = CloudReportSchema.safeParse(item);
+    return parsed.success ? [parsed.data] : [];
+  });
+  const cycles = rawCycles.flatMap((item) => {
+    const parsed = CloudPdcaCycleSchema.safeParse(item);
+    return parsed.success ? [parsed.data] : [];
+  });
+  const reportedInvalidReports = typeof body.invalid?.reports === "number" && Number.isInteger(body.invalid.reports) && body.invalid.reports >= 0 ? body.invalid.reports : 0;
+  const reportedInvalidCycles = typeof body.invalid?.cycles === "number" && Number.isInteger(body.invalid.cycles) && body.invalid.cycles >= 0 ? body.invalid.cycles : 0;
+  return {
+    reports,
+    cycles,
+    invalidReports: rawReports.length - reports.length + reportedInvalidReports,
+    invalidCycles: rawCycles.length - cycles.length + reportedInvalidCycles,
+  };
+}
+
+export function planCloudRestore(snapshot: CloudSnapshot, localReportIds: Iterable<string>, localCycleIds: Iterable<string>): CloudRestorePlan {
+  const reports = new Set(localReportIds);
+  const cycles = new Set(localCycleIds);
+  const missingReports = snapshot.reports.filter((item) => !reports.has(item.reportId));
+  const missingCycles = snapshot.cycles.filter((item) => !cycles.has(item.cycleId));
+  return {
+    reports: missingReports,
+    cycles: missingCycles,
+    reportConflicts: snapshot.reports.filter((item) => reports.has(item.reportId)).map((item) => item.reportId),
+    cycleConflicts: snapshot.cycles.filter((item) => cycles.has(item.cycleId)).map((item) => item.cycleId),
+    invalid: snapshot.invalidReports + snapshot.invalidCycles,
+  };
+}
 
 export interface SyncRepository {
   listMetadata(): SyncMetadata[];

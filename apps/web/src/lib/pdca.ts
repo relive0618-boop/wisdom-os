@@ -102,6 +102,12 @@ export function saveCycle(cycle: PdcaCycle): { ok: true } | { ok: false; code: "
   }
 }
 
+export function restoreCycle(cycle: PdcaCycle): { ok: true } | { ok: false; code: "PDCA_CYCLE_ALREADY_EXISTS" | "PDCA_STORAGE_SAVE_FAILED" } {
+  if (loadCycle(cycle.cycleId)) return { ok: false, code: "PDCA_CYCLE_ALREADY_EXISTS" };
+  const result = saveCycle(cycle);
+  return result.ok ? result : { ok: false, code: result.code };
+}
+
 export function listCycles(): PdcaCycle[] {
   if (typeof window === "undefined") return [];
   const cycles: PdcaCycle[] = [];

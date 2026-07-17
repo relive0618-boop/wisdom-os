@@ -60,6 +60,23 @@ export function saveReport(response: AnalyzeResponse): StoredReport {
   return record;
 }
 
+export function restoreReport(
+  response: AnalyzeResponse,
+  createdAt: string,
+): { ok: true; record: StoredReport } | { ok: false; code: "REPORT_ALREADY_EXISTS" | "REPORT_STORAGE_SAVE_FAILED" } {
+  const parsed = AnalyzeResponseSchema.safeParse(response);
+  if (!parsed.success) return { ok: false, code: "REPORT_STORAGE_SAVE_FAILED" };
+  if (loadReport(parsed.data.reportId)) return { ok: false, code: "REPORT_ALREADY_EXISTS" };
+  const record = StoredReportSchema.safeParse({ ...parsed.data, createdAt });
+  if (!record.success) return { ok: false, code: "REPORT_STORAGE_SAVE_FAILED" };
+  try {
+    writeAll([record.data, ...readAll()]);
+    return { ok: true, record: record.data };
+  } catch {
+    return { ok: false, code: "REPORT_STORAGE_SAVE_FAILED" };
+  }
+}
+
 export function loadReport(reportId: string): StoredReport | null {
   return readAll().find((item) => item.reportId === reportId) || null;
 }

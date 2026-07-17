@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { AnalyzeInputSchema, CloudErrorCodeSchema, CloudMutationSchema, SyncMetadataSchema, SyncPushRequestSchema } from "@wisdom/shared";
-import { conflictDuplicateId, metadataEntityId, stableHash, syncPush, SYNC_BATCH_SIZE } from "./cloud/sync";
+import { AnalyzeInputSchema, AnalyzeResponseSchema, CloudErrorCodeSchema, CloudMutationSchema, PdcaCycleSchema, ReportSchema, SyncMetadataSchema, SyncPushRequestSchema } from "@wisdom/shared";
+import { conflictDuplicateId, metadataEntityId, parseCloudSnapshot, planCloudRestore, stableHash, syncPush, SYNC_BATCH_SIZE } from "./cloud/sync";
 import { claimsAreAdmin, claimsUserId } from "./supabase/claims";
 import { adminAuthorization } from "./admin/authorization";
 import { canEdit, canTransition } from "./admin/contentTransitions";
@@ -23,6 +23,27 @@ const routeClient = readFileSync(resolve(process.cwd(), "src/lib/supabase/route.
 const browserClient = readFileSync(resolve(process.cwd(), "src/lib/supabase/client.ts"), "utf8");
 const syncPage = readFileSync(resolve(process.cwd(), "src/app/sync/page.tsx"), "utf8");
 const syncPushRoute = readFileSync(resolve(process.cwd(), "src/app/api/cloud/sync/push/route.ts"), "utf8");
+const syncPullRoute = readFileSync(resolve(process.cwd(), "src/app/api/cloud/sync/pull/route.ts"), "utf8");
+
+const cloudReportPayload = AnalyzeResponseSchema.parse({
+  decisionId: "cloud-decision",
+  reportId: "cloud-report",
+  cycleId: "cloud-cycle",
+  retrievedAt: "2026-07-18T00:00:00.000Z",
+  report: ReportSchema.parse({
+    decisionId: "cloud-decision", reportId: "cloud-report", mode: "local", category: "创业", problem_summary: "雲端決策", core_conflict: "測試衝突", situation_assessment: "測試評估",
+    citations: [{ id: "one", chapter: "一", title: "一", source: "一" }, { id: "two", chapter: "二", title: "二", source: "二" }],
+    strategies: [{ name: "甲", position: "甲", actions: ["甲"], suitable_when: "甲", risk: "甲" }, { name: "乙", position: "乙", actions: ["乙"], suitable_when: "乙", risk: "乙" }],
+    recommended_strategy: "甲", risks: ["甲"], action_plan_7d: ["1", "2", "3", "4", "5", "6", "7"], review_questions: ["甲"], disclaimer: "甲",
+  }),
+});
+const cloudCyclePayload = PdcaCycleSchema.parse({ id: "cloud-cycle", cycleId: "cloud-cycle", reportId: "cloud-report", decisionId: "cloud-decision", cycleNumber: 1, reportTitle: "雲端決策", reportCategory: "创业", startedAt: "2026-07-18T00:00:00.000Z", completedAt: null, items: [], checkins: [], reflection: null });
+function cloudSnapshot() {
+  return parseCloudSnapshot({
+    reports: [{ reportId: "cloud-report", decisionId: "cloud-decision", title: "雲端決策", category: "创业", payload: cloudReportPayload, revision: 1, deviceId: "device", clientUpdatedAt: "2026-07-18T00:00:00.000Z", updatedAt: "2026-07-18T00:00:00.000Z", deletedAt: null }],
+    cycles: [{ cycleId: "cloud-cycle", reportId: "cloud-report", payload: cloudCyclePayload, revision: 1, deviceId: "device", clientUpdatedAt: "2026-07-18T00:00:00.000Z", updatedAt: "2026-07-18T00:00:00.000Z", deletedAt: null }],
+  });
+}
 
 test("cloud error code 維持封閉集合", () => assert.equal(CloudErrorCodeSchema.safeParse("CLOUD_INTERNAL_ERROR").success, true));
 test("忘記密碼導向 server recovery route 建立 session", () => assert.match(authForm, /mode === "forgot" \? "\/auth\/recovery\?next=%2Freset-password" : "\/auth\/callback"/));
@@ -66,6 +87,11 @@ test("手動同步保留單筆失敗，讓本機資料可稍後重試", async ()
   assert.deepEqual(results.map(({ success, errorCode, cloudRevision }) => ({ success, errorCode, cloudRevision })), [{ success: false, errorCode: "CLOUD_CONFLICT", cloudRevision: 2 }]);
 });
 test("同步頁會呼叫 push API，而不是只讀取狀態", () => { assert.match(syncPage, /syncPush\(deviceId, entities\)/); assert.doesNotMatch(syncPage, /fetch\("\/api\/cloud\/sync\/status"\)/); });
+test("雲端快照只接受符合 Schema 的資料", () => { const snapshot = parseCloudSnapshot({ reports: [{ reportId: "broken" }], cycles: [] }); assert.equal(snapshot.reports.length, 0); assert.equal(snapshot.invalidReports, 1); });
+test("雲端還原計畫只建立本機缺少的資料", () => { const plan = planCloudRestore(cloudSnapshot(), [], []); assert.equal(plan.reports.length, 1); assert.equal(plan.cycles.length, 1); assert.equal(plan.reportConflicts.length, 0); });
+test("雲端同 ID 會列為衝突而不納入還原", () => { const plan = planCloudRestore(cloudSnapshot(), ["cloud-report"], ["cloud-cycle"]); assert.equal(plan.reports.length, 0); assert.equal(plan.cycles.length, 0); assert.deepEqual(plan.reportConflicts, ["cloud-report"]); assert.deepEqual(plan.cycleConflicts, ["cloud-cycle"]); });
+test("同步頁只有明確下載操作才寫入本機", () => { assert.match(syncPage, /onClick=\{\(\) => void download\(\)\}/); assert.match(syncPage, /restoreReport\(item\.payload/); assert.match(syncPage, /restoreCycle\(item\.payload\)/); });
+test("雲端 pull 排除 soft delete 並驗證回傳格式", () => { assert.match(syncPullRoute, /\.is\("deleted_at", null\)/); assert.match(syncPullRoute, /CloudReportSchema\.safeParse/); assert.match(syncPullRoute, /CloudPdcaCycleSchema\.safeParse/); });
 test("批次 push 僅回傳安全 error code 與 revision", () => { assert.match(syncPushRoute, /CloudErrorCodeSchema\.safeParse/); assert.doesNotMatch(syncPushRoute, /error\.message|error\.details|error\.hint/); });
 test("sync metadata 接受 local_only", () => assert.equal(SyncMetadataSchema.safeParse({ entityId: "r", localUpdatedAt: new Date().toISOString(), cloudRevision: null, lastSyncedHash: null, lastSyncedAt: null, syncState: "local_only", source: "local", pendingOperation: "none" }).success, true));
 for (const state of ["pending_upload", "pending_download", "syncing", "synced", "conflict", "offline", "error"] as const) test(`sync metadata 支援 ${state}`, () => assert.equal(SyncMetadataSchema.safeParse({ entityId: state, localUpdatedAt: new Date().toISOString(), cloudRevision: null, lastSyncedHash: null, lastSyncedAt: null, syncState: state, source: "local", pendingOperation: "none" }).success, true));
