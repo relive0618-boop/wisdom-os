@@ -23,7 +23,7 @@ const routeClient = readFileSync(resolve(process.cwd(), "src/lib/supabase/route.
 const browserClient = readFileSync(resolve(process.cwd(), "src/lib/supabase/client.ts"), "utf8");
 
 test("cloud error code 維持封閉集合", () => assert.equal(CloudErrorCodeSchema.safeParse("CLOUD_INTERNAL_ERROR").success, true));
-test("忘記密碼直接導向可接收 implicit flow 的重設頁", () => assert.match(authForm, /mode === "forgot" \? "\/reset-password" : "\/auth\/callback"/));
+test("忘記密碼導向 server recovery route 建立 session", () => assert.match(authForm, /mode === "forgot" \? "\/auth\/recovery\?next=%2Freset-password" : "\/auth\/callback"/));
 test("設定新密碼頁不在伺服器端提前導向登入", () => assert.doesNotMatch(resetPasswordPage, /redirect\(|getVerifiedClaims\(/));
 test("設定新密碼僅透過 Supabase 更新密碼", () => assert.match(resetPasswordForm, /client\.auth\.updateUser\(\{ password \}\)/));
 test("設定新密碼不洩漏 Supabase 原始錯誤", () => assert.doesNotMatch(resetPasswordForm, /error\.message|error\.details|error\.hint/));
