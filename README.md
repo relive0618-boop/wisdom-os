@@ -131,7 +131,7 @@ RATE_LIMIT_HASH_SECRET=
 
 Preview Supabase 已完成真实 migration、RLS／Policies／Data API grants 验证与内容 seed：`knowledge_entries` 为 56 笔、`case_entries` 为 30 笔。seed runner 直接保留 Supabase 原生 query result 的 `status`／`statusText`，不使用共享 FIFO 推测 HTTP 状态。Protected Preview smoke test、同帐号跨装置下载与 Account A／B 隔离验收均已通过：云端一份报告与一轮 PDCA 可安全还原为两笔本机资料；同 ID 不会覆盖本机；Account B 无法列出、读取、更新或删除 Account A 的资料；临时验收资料已清除。Production flags 与 credentials 保持未设定。
 
-本轮自动化验证：309 个 unit/integration tests 与 27 个 Playwright E2E tests 均通过。
+本轮自动化验证：365 个 unit/integration tests 与 27 个 Playwright E2E tests 均通过。新增的 `20260719_wisdom_os_admin_audit_hardening.sql` 会在数据库层强制 Admin 内容状态机并让内容异动与最小化 audit event 原子完成；该 migration 尚未套用到 Preview，真人 Admin／Audit 验收仍待独立批准。
 
 已配置 Preview 后，可使用完全只读的 smoke test：
 
@@ -154,7 +154,7 @@ pnpm verify:preview -- --base-url <PREVIEW_URL>
 - [x] OpenAI-compatible 远程 AI + 本地 fallback
 - [x] Zod 输入、输出与报告校验
 - [~] Supabase 云端帐号、RLS 迁移与选择性同步（Preview migration、RLS／grants、内容 seed、Auth、同帐号跨装置下载与 Account A／B 隔离已真实验证；Admin 与 rate limit 仍待验收）
-- [~] 知识与案例管理的审核资料模型（Preview 待浏览器验收；Production feature flags 保持关闭）
+- [~] 知识与案例管理的审核资料模型（本机状态机与原子 audit 加固已完成；新 Preview migration 与真人 Admin／Audit 验收待独立批准；Production feature flags 保持关闭）
 - [ ] 个人决策模型（偏好学习）
 - [ ] 多经典扩展（易经、鬼谷子...）
 - [ ] Stripe 商业化

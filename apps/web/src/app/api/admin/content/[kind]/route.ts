@@ -1,5 +1,13 @@
 import { NextResponse } from "next/server";
-import { claimsAreAdmin, getVerifiedClaims } from "@/lib/supabase/server";
-import { supabaseConfig } from "@/lib/supabase/config";
-const table = (kind: string) => kind === "cases" ? "case_entries" : kind === "knowledge" ? "knowledge_entries" : null;
-export async function GET(_request: Request, { params }: { params: Promise<{ kind: string }> }) { const name = table((await params).kind); const config = supabaseConfig(); if (!config.configured || !config.flags.adminEnabled) return NextResponse.json({ error: { code: "CLOUD_NOT_CONFIGURED" } }, { status: 503 }); const { client, claims } = await getVerifiedClaims(); if (!claims) return NextResponse.json({ error: { code: "AUTH_REQUIRED" } }, { status: 401 }); if (!claimsAreAdmin(claims) || !client || !name) return NextResponse.json({ error: { code: "CLOUD_FORBIDDEN" } }, { status: 403 }); const { data, error } = await client.from(name).select("*").order("updated_at", { ascending: false }); return error ? NextResponse.json({ error: { code: "CLOUD_TEMPORARILY_UNAVAILABLE" } }, { status: 503 }) : NextResponse.json({ data: data ?? [] }); }
+import { adminContext, cloudDatabaseError, contentTable } from "@/lib/admin/server";
+
+export async function GET(_request: Request, { params }: { params: Promise<{ kind: string }> }) {
+  const context = await adminContext();
+  if ("error" in context) return context.error;
+  const table = contentTable((await params).kind);
+  if (!table) return NextResponse.json({ error: { code: "CLOUD_NOT_FOUND" } }, { status: 404 });
+
+  // Soft-deleted content is intentionally excluded from the default admin list.
+  const { data, error } = await context.client.from(table).select("*").is("deleted_at", null).order("updated_at", { ascending: false });
+  return error ? cloudDatabaseError(error) : NextResponse.json({ data: data ?? [] });
+}
