@@ -12,6 +12,7 @@ import { batches, summarizeResults } from "./sync/batchProcessor";
 import { planSync } from "./sync/syncPlanner";
 import { resolveConflict } from "./sync/conflictResolver";
 import { migrationProgress } from "./sync/migrationRunner";
+import { normalizeCloudTimestamp } from "./cloud/timestamp";
 
 const migration = readFileSync(resolve(process.cwd(), "../../supabase/migrations/20260715_wisdom_os_v04.sql"), "utf8");
 const authForm = readFileSync(resolve(process.cwd(), "src/components/auth/AuthForm.tsx"), "utf8");
@@ -88,6 +89,8 @@ test("手動同步保留單筆失敗，讓本機資料可稍後重試", async ()
 });
 test("同步頁會呼叫 push API，而不是只讀取狀態", () => { assert.match(syncPage, /syncPush\(deviceId, entities\)/); assert.doesNotMatch(syncPage, /fetch\("\/api\/cloud\/sync\/status"\)/); });
 test("雲端快照只接受符合 Schema 的資料", () => { const snapshot = parseCloudSnapshot({ reports: [{ reportId: "broken" }], cycles: [] }); assert.equal(snapshot.reports.length, 0); assert.equal(snapshot.invalidReports, 1); });
+test("Supabase timestamptz 會正規化為 Schema 接受的 UTC ISO 時間", () => assert.equal(normalizeCloudTimestamp("2026-07-18T18:00:00+00:00"), "2026-07-18T18:00:00.000Z"));
+test("無效雲端時間不會被猜測為有效資料", () => assert.equal(normalizeCloudTimestamp("not-a-time"), null));
 test("雲端還原計畫只建立本機缺少的資料", () => { const plan = planCloudRestore(cloudSnapshot(), [], []); assert.equal(plan.reports.length, 1); assert.equal(plan.cycles.length, 1); assert.equal(plan.reportConflicts.length, 0); });
 test("雲端同 ID 會列為衝突而不納入還原", () => { const plan = planCloudRestore(cloudSnapshot(), ["cloud-report"], ["cloud-cycle"]); assert.equal(plan.reports.length, 0); assert.equal(plan.cycles.length, 0); assert.deepEqual(plan.reportConflicts, ["cloud-report"]); assert.deepEqual(plan.cycleConflicts, ["cloud-cycle"]); });
 test("同步頁只有明確下載操作才寫入本機", () => { assert.match(syncPage, /onClick=\{\(\) => void download\(\)\}/); assert.match(syncPage, /restoreReport\(item\.payload/); assert.match(syncPage, /restoreCycle\(item\.payload\)/); });

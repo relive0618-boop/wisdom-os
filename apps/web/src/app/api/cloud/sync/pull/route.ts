@@ -1,4 +1,5 @@
 import { cloudContext } from "@/lib/cloud/server";
+import { normalizeCloudTimestamp } from "@/lib/cloud/timestamp";
 import { CloudPdcaCycleSchema, CloudReportSchema } from "@wisdom/shared";
 import { NextResponse } from "next/server";
 
@@ -11,9 +12,9 @@ function mapReport(value: Record<string, unknown>) {
     payload: value.payload,
     revision: value.revision,
     deviceId: value.device_id ?? null,
-    clientUpdatedAt: value.client_updated_at ?? null,
-    updatedAt: value.updated_at,
-    deletedAt: value.deleted_at ?? null,
+    clientUpdatedAt: value.client_updated_at === null ? null : normalizeCloudTimestamp(value.client_updated_at),
+    updatedAt: normalizeCloudTimestamp(value.updated_at),
+    deletedAt: value.deleted_at === null ? null : normalizeCloudTimestamp(value.deleted_at),
   });
 }
 
@@ -24,9 +25,9 @@ function mapCycle(value: Record<string, unknown>) {
     payload: value.payload,
     revision: value.revision,
     deviceId: value.device_id ?? null,
-    clientUpdatedAt: value.client_updated_at ?? null,
-    updatedAt: value.updated_at,
-    deletedAt: value.deleted_at ?? null,
+    clientUpdatedAt: value.client_updated_at === null ? null : normalizeCloudTimestamp(value.client_updated_at),
+    updatedAt: normalizeCloudTimestamp(value.updated_at),
+    deletedAt: value.deleted_at === null ? null : normalizeCloudTimestamp(value.deleted_at),
   });
 }
 
