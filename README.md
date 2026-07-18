@@ -129,7 +129,7 @@ RATE_LIMIT_HASH_SECRET=
 
 持久化 rate limit 是可选项：服务器先以 HMAC-SHA256 将 IP 匿名化后才传到数据库，数据库不保存原始 IP；数据库异常会安全降级为记忆体限流。详细作业说明见 `docs/`。
 
-Preview Supabase 已完成真实 migration、RLS／Policies／Data API grants 验证与内容 seed：`knowledge_entries` 为 56 笔、`case_entries` 为 30 笔。seed runner 直接保留 Supabase 原生 query result 的 `status`／`statusText`，不使用共享 FIFO 推测 HTTP 状态。Protected Preview smoke test 与同帐号跨装置下载已通过：云端一份报告与一轮 PDCA 可安全还原为两笔本机资料，且同 ID 不会覆盖本机。Production flags 与 credentials 保持未设定。
+Preview Supabase 已完成真实 migration、RLS／Policies／Data API grants 验证与内容 seed：`knowledge_entries` 为 56 笔、`case_entries` 为 30 笔。seed runner 直接保留 Supabase 原生 query result 的 `status`／`statusText`，不使用共享 FIFO 推测 HTTP 状态。Protected Preview smoke test、同帐号跨装置下载与 Account A／B 隔离验收均已通过：云端一份报告与一轮 PDCA 可安全还原为两笔本机资料；同 ID 不会覆盖本机；Account B 无法列出、读取、更新或删除 Account A 的资料；临时验收资料已清除。Production flags 与 credentials 保持未设定。
 
 本轮自动化验证：309 个 unit/integration tests 与 27 个 Playwright E2E tests 均通过。
 
@@ -153,7 +153,7 @@ pnpm verify:preview -- --base-url <PREVIEW_URL>
 - [x] 决策历史 + 报告/PDCA 本地持久化
 - [x] OpenAI-compatible 远程 AI + 本地 fallback
 - [x] Zod 输入、输出与报告校验
-- [~] Supabase 云端帐号、RLS 迁移与选择性同步（Preview migration、RLS／grants、内容 seed、Auth 与同帐号跨装置下载已真实验证；Admin、跨帐号隔离与 rate limit 仍待验收）
+- [~] Supabase 云端帐号、RLS 迁移与选择性同步（Preview migration、RLS／grants、内容 seed、Auth、同帐号跨装置下载与 Account A／B 隔离已真实验证；Admin 与 rate limit 仍待验收）
 - [~] 知识与案例管理的审核资料模型（Preview 待浏览器验收；Production feature flags 保持关闭）
 - [ ] 个人决策模型（偏好学习）
 - [ ] 多经典扩展（易经、鬼谷子...）
