@@ -39,5 +39,7 @@ export function safeAuditMetadata(value: unknown) {
     output.conflictResolution = record.conflictResolution;
   }
 
+  if (record.systemOperation === "canonical_seed") output.systemOperation = "canonical_seed";
+
   return output;
 }

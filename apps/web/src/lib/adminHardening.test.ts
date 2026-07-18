@@ -42,6 +42,16 @@ test("資料庫 trigger 僅信任 app metadata admin 或 server-only role", () =
   assert.match(hardeningMigration, /elsif public\.is_admin\(\) and auth\.uid\(\) is not null then/);
   assert.doesNotMatch(hardeningMigration, /user_metadata/);
 });
+test("system seed 路徑僅允許 service_role，且不接受瀏覽器 actor", () => {
+  assert.match(hardeningMigration, /if auth\.role\(\) = 'service_role' then[\s\S]*system_seed := true/);
+  assert.match(hardeningMigration, /if new\.created_by is not null or new\.updated_by is not null[\s\S]*new\.status <> 'published'/);
+  assert.doesNotMatch(hardeningMigration, /user_metadata/);
+});
+test("system seed 不可建立 draft、軟刪除或覆寫 canonical drift", () => {
+  assert.match(hardeningMigration, /if new\.payload is not distinct from old\.payload then[\s\S]*return null/);
+  assert.match(hardeningMigration, /old\.status <> 'published' or old\.deleted_at is not null/);
+  assert.match(hardeningMigration, /raise exception using errcode = 'P0001', message = 'content workflow rejected'/);
+});
 test("資料庫 trigger 不信任瀏覽器傳入 actor", () => assert.match(hardeningMigration, /new\.updated_by := trusted_actor/));
 test("資料庫 trigger 為內容版本遞增", () => assert.match(hardeningMigration, /new\.version := old\.version \+ 1/));
 
@@ -49,6 +59,11 @@ test("create 與 audit 由 after trigger 原子處理", () => assert.match(harde
 test("audit 失敗會讓內容交易回滾", () => assert.match(hardeningMigration, /Any error[\s\S]*rolls the entire mutation back/));
 test("audit action 由資料庫 mutation 類型推導", () => {
   for (const action of ["create", "update", "status_transition", "soft_delete"]) assert.match(hardeningMigration, new RegExp(`audit_action := '${action}'`));
+});
+test("system seed audit 為衍生 event，actor 固定 null 且不含 payload", () => {
+  assert.match(hardeningMigration, /audit_action := 'system_seed_create'/);
+  assert.match(hardeningMigration, /case when system_seed then null else new\.updated_by end/);
+  assert.match(hardeningMigration, /'systemOperation', case when system_seed then 'canonical_seed'/);
 });
 test("audit metadata 不會寫入 payload", () => {
   const auditFunction = hardeningMigration.slice(hardeningMigration.indexOf("create or replace function public.audit_admin_content_mutation"));
@@ -94,6 +109,7 @@ test("safe audit metadata 拒絕未 allowlist 的變更欄位", () => assert.dee
   { changedFields: ["payload"] },
 ));
 test("safe audit metadata 拒絕無效狀態與非整數版本", () => assert.deepEqual(safeAuditMetadata({ previousStatus: "published-now", version: 1.5 }), {}));
+test("safe audit metadata 只允許固定的 canonical seed 標記", () => assert.deepEqual(safeAuditMetadata({ systemOperation: "canonical_seed", token: "hidden" }), { systemOperation: "canonical_seed" }));
 test("user_metadata admin 仍不授權", () => assert.equal(claimsAreAdmin({ app_metadata: {}, user_metadata: { role: "admin" } } as never), false));
 test("只有 app_metadata admin 授權", () => assert.equal(claimsAreAdmin({ app_metadata: { role: "admin" } }), true));
 test("舊 JWT 未含 app metadata admin 時仍被拒絕", () => assert.equal(claimsAreAdmin({ app_metadata: {} }), false));

@@ -4,7 +4,9 @@
 
 Preview Supabase 专案已真实套用 `20260715_wisdom_os_v04.sql`。七张 public table 均已启用 RLS，Policies、Data API table grants 与 function grants 已完成验证。内容 seed 也已真实完成：`knowledge_entries` 为 56 笔，`case_entries` 为 30 笔。
 
-`pnpm seed:supabase` 永远只做本机离线预检：不读取环境变量、不建立 Supabase client、不发出网络请求，且输出 `Remote writes: 0`。真实 apply 已使用 server-only Secret Key 完成，不应在日常或 Preview 验收时重跑。seed runner 使用 Supabase 原生 transport，直接保留每个 query 的原生 `status`／`statusText`；不使用 `captureStatus` wrapper 或 FIFO response queue。
+`pnpm seed:supabase` 永远只做本机离线预检：不读取环境变量、不建立 Supabase client、不发出网络请求，且输出 `Remote writes: 0`。真实 apply 已使用 server-only Secret Key 完成，不应在日常或 Preview 验收时重跑。runner 使用 Supabase 原生 transport，直接保留每个 query 的原生 `status`／`statusText`；不使用 `captureStatus` wrapper 或 FIFO response queue。
+
+若未来获得独立批准重跑 `pnpm seed:supabase:apply`，必须先套用并验证未执行的 `20260719_wisdom_os_admin_audit_hardening.sql`。apply 先对两张允许表做只读 preflight：仅可插入缺少的 canonical system 内容（`published`、未删除、`created_by`／`updated_by` 均为 null）。已有且完全相同的 system 列只验证并跳过；payload 漂移、Admin 管理列、非 published 列或已删除列全部 fail closed，绝不覆盖、复活、删除或修改既有资料。相同列的重跑不建立新版本，也不产生新的 audit event。
 
 ## Preview 环境边界
 

@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import {
   applyConfiguration,
   applySeed,
+  classifySeedPreflight,
   formatApplyResult,
   formatDryRun,
   normalizeNativeQueryResult,
@@ -35,13 +36,35 @@ function runSeedCommand(extraEnv: Record<string, string> = {}) {
   });
 }
 
-function successfulClient(options: { failKnowledge?: boolean; failCases?: boolean; invalidVerification?: boolean; probeResult?: { data: unknown; error: unknown; status: number; statusText: string } } = {}): SeedClient & { calls: string[] } {
+type ExistingRows = Partial<Record<"knowledge_entries" | "case_entries", readonly unknown[]>>;
+
+function systemRow(row: { id: string; payload: Record<string, unknown> }, overrides: Record<string, unknown> = {}) {
+  return { id: row.id, payload: row.payload, status: "published", deleted_at: null, created_by: null, updated_by: null, ...overrides };
+}
+
+function successfulClient(options: {
+  failKnowledge?: boolean;
+  failCases?: boolean;
+  invalidVerification?: boolean;
+  probeResult?: { data: unknown; error: unknown; status: number; statusText: string };
+  existing?: ExistingRows;
+} = {}): SeedClient & { calls: string[] } {
   const calls: string[] = [];
   return {
     calls,
     probe: async (table) => {
       calls.push(`probe:${table}`);
       return options.probeResult ?? { data: null, error: null, status: 200, statusText: "OK" };
+    },
+    inspect: async (table, ids) => {
+      calls.push(`inspect:${table}:${ids.length}`);
+      const existing = options.existing?.[table] ?? [];
+      return {
+        data: existing.filter((row) => Boolean(row && typeof row === "object" && typeof (row as { id?: unknown }).id === "string" && ids.includes((row as { id: string }).id))),
+        error: null,
+        status: 200,
+        statusText: "OK",
+      };
     },
     upsert: async (table, rows) => {
       calls.push(`upsert:${table}:${rows.length}`);
@@ -95,6 +118,47 @@ test("跨表相同 id 被明確標為允許", () => {
   assert.equal(result.crossTableIdCollisions, 1);
   assert.match(formatDryRun(result), /allowed: separate tables/);
 });
+test("system seed 資料列一律明確指定 published、active 與空 actor", () => {
+  const validation = validateSeedData(validData());
+  assert.deepEqual(validation.knowledgeRows[0] && {
+    status: validation.knowledgeRows[0].status,
+    deleted_at: validation.knowledgeRows[0].deleted_at,
+    created_by: validation.knowledgeRows[0].created_by,
+    updated_by: validation.knowledgeRows[0].updated_by,
+  }, { status: "published", deleted_at: null, created_by: null, updated_by: null });
+});
+test("空表 preflight 將兩筆 canonical 資料分類為 missing", () => {
+  const validation = validateSeedData(validData());
+  assert.equal(classifySeedPreflight(validation.knowledgeRows, [])?.preflight.missing, 1);
+  assert.equal(classifySeedPreflight(validation.caseRows, [])?.preflight.missing, 1);
+});
+test("相同 system 資料列分類為 identical，不列為衝突", () => {
+  const validation = validateSeedData(validData());
+  const result = classifySeedPreflight(validation.knowledgeRows, [systemRow(validation.knowledgeRows[0]!)]);
+  assert.deepEqual(result?.preflight, { missing: 0, identical: 1, drifted: 0, adminManaged: 0, statusConflict: 0, deleted: 0 });
+  assert.equal(result?.blockedError, null);
+});
+test("system canonical payload 不同會安全停止，不可覆寫", () => {
+  const validation = validateSeedData(validData());
+  const result = classifySeedPreflight(validation.knowledgeRows, [systemRow(validation.knowledgeRows[0]!, { payload: { id: "knowledge-1", title: "different" } })]);
+  assert.equal(result?.blockedError, "SEED_CONTENT_DRIFT");
+  assert.equal(result?.preflight.drifted, 1);
+});
+test("admin-managed 既有資料會安全停止，不可被 system seed 覆寫", () => {
+  const validation = validateSeedData(validData());
+  const result = classifySeedPreflight(validation.knowledgeRows, [systemRow(validation.knowledgeRows[0]!, { created_by: "actor" })]);
+  assert.equal(result?.blockedError, "SEED_ADMIN_MANAGED_CONFLICT");
+});
+test("封存或非 published 既有資料會安全停止", () => {
+  const validation = validateSeedData(validData());
+  const result = classifySeedPreflight(validation.knowledgeRows, [systemRow(validation.knowledgeRows[0]!, { status: "archived" })]);
+  assert.equal(result?.blockedError, "SEED_STATUS_CONFLICT");
+});
+test("軟刪除既有資料會安全停止，seed 不會復活資料", () => {
+  const validation = validateSeedData(validData());
+  const result = classifySeedPreflight(validation.knowledgeRows, [systemRow(validation.knowledgeRows[0]!, { deleted_at: "2026-07-19T00:00:00.000Z" })]);
+  assert.equal(result?.blockedError, "SEED_DELETED_CONFLICT");
+});
 test("apply 缺 URL 被安全拒絕", () => assert.throws(() => applyConfiguration({ SUPABASE_SECRET_KEY: mockSecret }), /SEED_URL_INVALID/));
 test("apply 缺 Secret 被安全拒絕", () => assert.throws(() => applyConfiguration({ NEXT_PUBLIC_SUPABASE_URL: mockUrl }), /SEED_SECRET_FORMAT_INVALID/));
 test("apply 拒絕不安全 URL 與非 Secret Key", () => {
@@ -110,8 +174,85 @@ test("apply 成功後核對遠端 ID 與數量", async () => {
   assert.equal(result.cases.confirmed, 1);
   assert.equal(result.upsertCallsAttempted, 2);
   assert.equal(result.remoteRowsConfirmed, 2);
-  assert.deepEqual(client.calls, ["probe:knowledge_entries", "probe:case_entries", "upsert:knowledge_entries:1", "verify:knowledge_entries:1", "upsert:case_entries:1", "verify:case_entries:1"]);
+  assert.deepEqual(client.calls, ["probe:knowledge_entries", "probe:case_entries", "inspect:knowledge_entries:1", "inspect:case_entries:1", "upsert:knowledge_entries:1", "verify:knowledge_entries:1", "upsert:case_entries:1", "verify:case_entries:1"]);
 });
+test("全量 canonical 資料在空表 preflight 下可完成 56 knowledge 與 30 cases", async () => {
+  const dataset = {
+    knowledge: JSON.parse(readFileSync(resolve(process.cwd(), "src/lib/knowledge.json"), "utf8")),
+    cases: JSON.parse(readFileSync(resolve(process.cwd(), "src/lib/cases.json"), "utf8")),
+  };
+  const result = await applySeed(successfulClient(), validateSeedData(dataset));
+  assert.equal(result.success, true);
+  assert.equal(result.knowledge.confirmed, 56);
+  assert.equal(result.cases.confirmed, 30);
+  assert.equal(result.rowsInserted, 86);
+});
+test("相同的 system seed 重跑只驗證、不啟動 upsert 或 audit mutation", async () => {
+  const validation = validateSeedData(validData());
+  const client = successfulClient({ existing: {
+    knowledge_entries: [systemRow(validation.knowledgeRows[0]!)],
+    case_entries: [systemRow(validation.caseRows[0]!)],
+  } });
+  const result = await applySeed(client, validation);
+  assert.equal(result.success, true);
+  assert.equal(result.upsertCallsAttempted, 0);
+  assert.equal(result.rowsInserted, 0);
+  assert.equal(result.knowledge.preflight.identical, 1);
+  assert.equal(result.cases.preflight.identical, 1);
+  assert.ok(!client.calls.some((call) => call.startsWith("upsert:")));
+});
+test("base seed 後再套用 hardening 時，既有 canonical rows 可 no-op 重跑", async () => {
+  const dataset = {
+    knowledge: JSON.parse(readFileSync(resolve(process.cwd(), "src/lib/knowledge.json"), "utf8")),
+    cases: JSON.parse(readFileSync(resolve(process.cwd(), "src/lib/cases.json"), "utf8")),
+  };
+  const validation = validateSeedData(dataset);
+  const client = successfulClient({ existing: {
+    knowledge_entries: validation.knowledgeRows.map((row) => systemRow(row)),
+    case_entries: validation.caseRows.map((row) => systemRow(row)),
+  } });
+  const result = await applySeed(client, validation);
+  assert.equal(result.success, true);
+  assert.equal(result.knowledge.confirmed, 56);
+  assert.equal(result.cases.confirmed, 30);
+  assert.equal(result.upsertCallsAttempted, 0);
+  assert.equal(result.rowsInserted, 0);
+});
+test("base migration 與 hardening migration 的合法順序都保留 canonical seed 路徑", () => {
+  const baseMigration = readFileSync(resolve(process.cwd(), "../../supabase/migrations/20260715_wisdom_os_v04.sql"), "utf8");
+  const hardeningMigration = readFileSync(resolve(process.cwd(), "../../supabase/migrations/20260719_wisdom_os_admin_audit_hardening.sql"), "utf8");
+  assert.match(baseMigration, /create table if not exists public\.knowledge_entries/);
+  assert.match(baseMigration, /create table if not exists public\.case_entries/);
+  assert.match(hardeningMigration, /if auth\.role\(\) = 'service_role' then/);
+  assert.match(hardeningMigration, /new\.payload is not distinct from old\.payload[\s\S]*return null/);
+});
+test("只有缺少的 table 會啟動一次 seed insert", async () => {
+  const validation = validateSeedData(validData());
+  const client = successfulClient({ existing: { knowledge_entries: [systemRow(validation.knowledgeRows[0]!)] } });
+  const result = await applySeed(client, validation);
+  assert.equal(result.success, true);
+  assert.equal(result.knowledge.rowsInserted, 0);
+  assert.equal(result.cases.rowsInserted, 1);
+  assert.equal(result.upsertCallsAttempted, 1);
+  assert.ok(!client.calls.includes("upsert:knowledge_entries:1"));
+  assert.ok(client.calls.includes("upsert:case_entries:1"));
+});
+for (const [label, existing, expected] of [
+  ["payload drift", { knowledge_entries: [systemRow(validateSeedData(validData()).knowledgeRows[0]!, { payload: { changed: true } })] }, "SEED_CONTENT_DRIFT"],
+  ["admin-managed row", { knowledge_entries: [systemRow(validateSeedData(validData()).knowledgeRows[0]!, { updated_by: "actor" })] }, "SEED_ADMIN_MANAGED_CONFLICT"],
+  ["archived row", { knowledge_entries: [systemRow(validateSeedData(validData()).knowledgeRows[0]!, { status: "archived" })] }, "SEED_STATUS_CONFLICT"],
+  ["deleted row", { knowledge_entries: [systemRow(validateSeedData(validData()).knowledgeRows[0]!, { deleted_at: "2026-07-19T00:00:00.000Z" })] }, "SEED_DELETED_CONFLICT"],
+] as const) {
+  test(`${label} preflight 零寫入並回傳安全錯誤碼`, async () => {
+    const client = successfulClient({ existing });
+    const result = await applySeed(client, validateSeedData(validData()));
+    assert.equal(result.success, false);
+    assert.equal(result.knowledge.errorCode, expected);
+    assert.equal(result.upsertCallsAttempted, 0);
+    assert.equal(result.rowsInserted, 0);
+    assert.ok(!client.calls.some((call) => call.startsWith("upsert:")));
+  });
+}
 test("knowledge upsert error 被安全捕捉且停止後續寫入", async () => {
   const client = successfulClient({ failKnowledge: true });
   const result = await applySeed(client, validateSeedData(validData()));
@@ -120,7 +261,7 @@ test("knowledge upsert error 被安全捕捉且停止後續寫入", async () => 
   assert.equal(result.cases.errorCode, "SEED_SKIPPED_AFTER_FAILURE");
   assert.equal(result.upsertCallsAttempted, 1);
   assert.equal(result.remoteRowsConfirmed, 0);
-  assert.deepEqual(client.calls, ["probe:knowledge_entries", "probe:case_entries", "upsert:knowledge_entries:1"]);
+  assert.deepEqual(client.calls, ["probe:knowledge_entries", "probe:case_entries", "inspect:knowledge_entries:1", "inspect:case_entries:1", "upsert:knowledge_entries:1"]);
 });
 test("case upsert error 被安全捕捉且不謊稱整體成功", async () => {
   const client = successfulClient({ failCases: true });
@@ -158,6 +299,7 @@ function diagnosticClient(status: number, code: string | null): SeedClient & { c
   return {
     calls,
     probe: async (table) => { calls.push(`probe:${table}`); return { data: null, error: { code, message: "private message", details: "private details", hint: "private hint" }, status, statusText: "Error" }; },
+    inspect: async () => ({ data: [], error: null, status: 200, statusText: "OK" }),
     upsert: async () => { calls.push("upsert"); return { data: null, error: null, status: 200, statusText: "OK" }; },
     verify: async () => ({ data: [], error: null, status: 200, statusText: "OK" }),
   };
@@ -169,7 +311,7 @@ for (const [status, code, expected] of [[401, null, "SEED_AUTH_FAILED"], [403, "
   });
 }
 test("probe network throw 為 SEED_NETWORK_FAILED 且零寫入", async () => {
-  const client: SeedClient = { probe: async () => { throw new Error(); }, upsert: async () => ({ data: null, error: null, status: 200, statusText: "OK" }), verify: async () => ({ data: [], error: null, status: 200, statusText: "OK" }) };
+  const client: SeedClient = { probe: async () => { throw new Error(); }, inspect: async () => ({ data: [], error: null, status: 200, statusText: "OK" }), upsert: async () => ({ data: null, error: null, status: 200, statusText: "OK" }), verify: async () => ({ data: [], error: null, status: 200, statusText: "OK" }) };
   const result = await applySeed(client, validateSeedData(validData()));
   assert.equal(result.knowledge.errorCode, "SEED_NETWORK_FAILED"); assert.equal(result.upsertCallsAttempted, 0); assert.equal(result.remoteRowsConfirmed, 0);
 });

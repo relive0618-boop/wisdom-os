@@ -29,7 +29,12 @@ function testFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
   if (!url) return Promise.resolve(new Response("[]", { status: 400, statusText: "Bad Request" }));
   const ids = (url.searchParams.get("id")?.match(/\((.*)\)/)?.[1]?.split(",").filter(Boolean) ?? []);
   const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-  const data = method === "GET" ? ids.map((id) => ({ id, status: "published", deleted_at: null })) : [];
+  const select = url.searchParams.get("select") ?? "";
+  // Tests model a new database for the preflight query, then a published active
+  // row for post-write verification. Production never uses this transport.
+  const data = method === "GET"
+    ? (select.includes("payload") ? [] : ids.map((id) => ({ id, status: "published", deleted_at: null })))
+    : [];
   const status = Number(process.env.WISDOM_SEED_TEST_RESPONSE_STATUS ?? "200");
   const providerCode = process.env.WISDOM_SEED_TEST_PROVIDER_CODE;
   if (!path.endsWith("/knowledge_entries") && !path.endsWith("/case_entries")) return Promise.resolve(new Response("[]", { status: 200 }));
@@ -56,6 +61,7 @@ async function createApplyClient(): Promise<SeedClient> {
     };
     return {
       probe: (table) => withStatus(client.from(table).select("id", { head: true }).limit(0)),
+      inspect: (table, ids) => withStatus(client.from(table).select("id,payload,status,deleted_at,created_by,updated_by,version").in("id", ids)),
       upsert: (table, rows) => withStatus(client.from(table).upsert(rows, { onConflict: "id" }).select("id,status,deleted_at")),
       verify: (table, ids) => withStatus(client.from(table).select("id,status,deleted_at").in("id", ids)),
     };

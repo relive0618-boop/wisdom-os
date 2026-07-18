@@ -125,13 +125,13 @@ WISDOM_PERSISTENT_RATE_LIMIT_ENABLED=false
 RATE_LIMIT_HASH_SECRET=
 ```
 
-在 Supabase 先执行 `supabase/migrations/20260715_wisdom_os_v04.sql`。`pnpm seed:supabase` 是完全离线的预检：不读取环境变量、不建立 Supabase client、不会发出网络请求或写入资料。实际 runner 位于拥有 `@supabase/supabase-js` 的 `apps/web` package，避免 pnpm workspace 的跨 package 解析依赖。只有在 Preview 的服务器环境已安全配置后，才明确执行 `pnpm seed:supabase:apply`；它会先拒绝不安全的 URL 或非 Secret Key，再只以 `id` upsert `knowledge_entries` 与 `case_entries`，并逐批只读核对 `published` 与 `deleted_at` 状态。两张表不是跨表 transaction，若后段失败会清楚标记部分成功；可安全重跑 apply。迁移会开启 RLS：用户只能访问自己的报告和 PDCA；公开内容只读取 `published`；管理员角色只取自 JWT `app_metadata.role`。同步永远由使用者在 `/sync` 明确开始，每批最多 25 笔。下载只还原本机缺少的报告与 PDCA；同 ID 的云端资料绝不覆盖或重复写入本机，而是标示为已有对应本机资料。
+在 Supabase 先执行已批准的 migration。`pnpm seed:supabase` 是完全离线的预检：不读取环境变量、不建立 Supabase client、不会发出网络请求或写入资料。实际 runner 位于拥有 `@supabase/supabase-js` 的 `apps/web` package，避免 pnpm workspace 的跨 package 解析依赖。只有在 Preview 的服务器环境已安全配置且获得独立批准后，才明确执行 `pnpm seed:supabase:apply`。runner 先以 service-role 做只读 preflight：仅允许补入缺少的 canonical `knowledge_entries` 与 `case_entries`，且新列固定为 `published`、active、无 actor。完全相同的既有 system 列会跳过；内容漂移、Admin 管理列、非 published 或已删除列会以安全错误码停止，绝不覆盖、复活或删除资料。两张表不是跨表 transaction，若后段失败会清楚标记部分成功；重跑只会验证相同 system 列，不产生新版本或 audit event。迁移会开启 RLS：用户只能访问自己的报告和 PDCA；公开内容只读取 `published`；管理员角色只取自 JWT `app_metadata.role`。同步永远由使用者在 `/sync` 明确开始，每批最多 25 笔。下载只还原本机缺少的报告与 PDCA；同 ID 的云端资料绝不覆盖或重复写入本机，而是标示为已有对应本机资料。
 
 持久化 rate limit 是可选项：服务器先以 HMAC-SHA256 将 IP 匿名化后才传到数据库，数据库不保存原始 IP；数据库异常会安全降级为记忆体限流。详细作业说明见 `docs/`。
 
 Preview Supabase 已完成真实 migration、RLS／Policies／Data API grants 验证与内容 seed：`knowledge_entries` 为 56 笔、`case_entries` 为 30 笔。seed runner 直接保留 Supabase 原生 query result 的 `status`／`statusText`，不使用共享 FIFO 推测 HTTP 状态。Protected Preview smoke test、同帐号跨装置下载与 Account A／B 隔离验收均已通过：云端一份报告与一轮 PDCA 可安全还原为两笔本机资料；同 ID 不会覆盖本机；Account B 无法列出、读取、更新或删除 Account A 的资料；临时验收资料已清除。Production flags 与 credentials 保持未设定。
 
-本轮自动化验证：365 个 unit/integration tests 与 27 个 Playwright E2E tests 均通过。新增的 `20260719_wisdom_os_admin_audit_hardening.sql` 会在数据库层强制 Admin 内容状态机并让内容异动与最小化 audit event 原子完成；该 migration 尚未套用到 Preview，真人 Admin／Audit 验收仍待独立批准。
+`20260719_wisdom_os_admin_audit_hardening.sql` 会在数据库层强制 Admin 内容状态机并让内容异动与最小化 audit event 原子完成，同时提供仅 service-role 可走的 canonical seed insert／相同列 no-op 路径。该 migration 尚未套用到 Preview，真人 Admin／Audit 与新的 seed preflight 验收仍待独立批准。
 
 已配置 Preview 后，可使用完全只读的 smoke test：
 
