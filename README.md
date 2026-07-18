@@ -125,11 +125,13 @@ WISDOM_PERSISTENT_RATE_LIMIT_ENABLED=false
 RATE_LIMIT_HASH_SECRET=
 ```
 
-在 Supabase 先执行 `supabase/migrations/20260715_wisdom_os_v04.sql`。`pnpm seed:supabase` 是完全离线的预检：不读取环境变量、不建立 Supabase client、不会发出网络请求或写入资料。实际 runner 位于拥有 `@supabase/supabase-js` 的 `apps/web` package，避免 pnpm workspace 的跨 package 解析依赖。只有在 Preview 的服务器环境已安全配置后，才明确执行 `pnpm seed:supabase:apply`；它会先拒绝不安全的 URL 或非 Secret Key，再只以 `id` upsert `knowledge_entries` 与 `case_entries`，并逐批只读核对 `published` 与 `deleted_at` 状态。两张表不是跨表 transaction，若后段失败会清楚标记部分成功；可安全重跑 apply。迁移会开启 RLS：用户只能访问自己的报告和 PDCA；公开内容只读取 `published`；管理员角色只取自 JWT `app_metadata.role`。同步永远由使用者在 `/sync` 明确开始，每批最多 25 笔，以 SHA-256 比对；发生冲突时选择本地、云端或两者，绝不自动删除本地数据。
+在 Supabase 先执行 `supabase/migrations/20260715_wisdom_os_v04.sql`。`pnpm seed:supabase` 是完全离线的预检：不读取环境变量、不建立 Supabase client、不会发出网络请求或写入资料。实际 runner 位于拥有 `@supabase/supabase-js` 的 `apps/web` package，避免 pnpm workspace 的跨 package 解析依赖。只有在 Preview 的服务器环境已安全配置后，才明确执行 `pnpm seed:supabase:apply`；它会先拒绝不安全的 URL 或非 Secret Key，再只以 `id` upsert `knowledge_entries` 与 `case_entries`，并逐批只读核对 `published` 与 `deleted_at` 状态。两张表不是跨表 transaction，若后段失败会清楚标记部分成功；可安全重跑 apply。迁移会开启 RLS：用户只能访问自己的报告和 PDCA；公开内容只读取 `published`；管理员角色只取自 JWT `app_metadata.role`。同步永远由使用者在 `/sync` 明确开始，每批最多 25 笔。下载只还原本机缺少的报告与 PDCA；同 ID 的云端资料绝不覆盖或重复写入本机，而是标示为已有对应本机资料。
 
 持久化 rate limit 是可选项：服务器先以 HMAC-SHA256 将 IP 匿名化后才传到数据库，数据库不保存原始 IP；数据库异常会安全降级为记忆体限流。详细作业说明见 `docs/`。
 
-Preview Supabase 已完成真实 migration、RLS／Policies／Data API grants 验证与内容 seed：`knowledge_entries` 为 56 笔、`case_entries` 为 30 笔。seed runner 直接保留 Supabase 原生 query result 的 `status`／`statusText`，不使用共享 FIFO 推测 HTTP 状态。Preview 的 Auth、跨装置同步、Admin 与 persistent rate limit 仍须在真实浏览器中按 `docs/v0.4-preview-live-verification.md` 验收；Production flags 与 credentials 保持未设定。
+Preview Supabase 已完成真实 migration、RLS／Policies／Data API grants 验证与内容 seed：`knowledge_entries` 为 56 笔、`case_entries` 为 30 笔。seed runner 直接保留 Supabase 原生 query result 的 `status`／`statusText`，不使用共享 FIFO 推测 HTTP 状态。Protected Preview smoke test 与同帐号跨装置下载已通过：云端一份报告与一轮 PDCA 可安全还原为两笔本机资料，且同 ID 不会覆盖本机。Production flags 与 credentials 保持未设定。
+
+本轮自动化验证：309 个 unit/integration tests 与 27 个 Playwright E2E tests 均通过。
 
 已配置 Preview 后，可使用完全只读的 smoke test：
 
@@ -151,7 +153,7 @@ pnpm verify:preview -- --base-url <PREVIEW_URL>
 - [x] 决策历史 + 报告/PDCA 本地持久化
 - [x] OpenAI-compatible 远程 AI + 本地 fallback
 - [x] Zod 输入、输出与报告校验
-- [~] Supabase 云端帐号、RLS 迁移与选择性同步（Preview migration、RLS／grants 与内容 seed 已真实验证；浏览器 Auth／Sync／Admin／rate limit 待验收）
+- [~] Supabase 云端帐号、RLS 迁移与选择性同步（Preview migration、RLS／grants、内容 seed、Auth 与同帐号跨装置下载已真实验证；Admin、跨帐号隔离与 rate limit 仍待验收）
 - [~] 知识与案例管理的审核资料模型（Preview 待浏览器验收；Production feature flags 保持关闭）
 - [ ] 个人决策模型（偏好学习）
 - [ ] 多经典扩展（易经、鬼谷子...）

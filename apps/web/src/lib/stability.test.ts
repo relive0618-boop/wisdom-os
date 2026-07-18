@@ -201,6 +201,18 @@ test("雲端還原報告只新增缺少的本機資料", () => {
   const restored = restoreReport(response, "2026-07-18T00:00:00.000Z");
   assert.equal(restored.ok, true);
   assert.equal(loadReport(response.reportId)?.createdAt, "2026-07-18T00:00:00.000Z");
+  assert.equal(listReports().length, 1);
+});
+
+test("還原報告與 PDCA 可在重新讀取 localStorage 後保持關聯", () => {
+  resetStorage();
+  const response = makeResponse();
+  const cycle = createNewCycle(response.reportId, response.decisionId, "還原驗收", "创业", [], 1, response.cycleId);
+  assert.equal(restoreReport(response, "2026-07-18T00:00:00.000Z").ok, true);
+  assert.deepEqual(restoreCycle(cycle), { ok: true });
+  assert.equal(loadReport(response.reportId)?.reportId, response.reportId);
+  assert.equal(loadCycle(cycle.cycleId)?.reportId, response.reportId);
+  assert.equal(listCycles().filter((item) => item.reportId === response.reportId).length, 1);
 });
 
 test("雲端同 ID 報告不覆蓋本機資料", () => {

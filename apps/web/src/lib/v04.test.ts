@@ -13,6 +13,13 @@ import { planSync } from "./sync/syncPlanner";
 import { resolveConflict } from "./sync/conflictResolver";
 import { migrationProgress } from "./sync/migrationRunner";
 import { normalizeCloudTimestamp } from "./cloud/timestamp";
+import {
+  beginCloudRequest,
+  browserConnectionChanged,
+  cloudConnectionLabel,
+  finishCloudRequest,
+  initialCloudConnectionState,
+} from "./cloud/connectionState";
 
 const migration = readFileSync(resolve(process.cwd(), "../../supabase/migrations/20260715_wisdom_os_v04.sql"), "utf8");
 const authForm = readFileSync(resolve(process.cwd(), "src/components/auth/AuthForm.tsx"), "utf8");
@@ -88,13 +95,68 @@ test("手動同步保留單筆失敗，讓本機資料可稍後重試", async ()
   assert.deepEqual(results.map(({ success, errorCode, cloudRevision }) => ({ success, errorCode, cloudRevision })), [{ success: false, errorCode: "CLOUD_CONFLICT", cloudRevision: 2 }]);
 });
 test("同步頁會呼叫 push API，而不是只讀取狀態", () => { assert.match(syncPage, /syncPush\(deviceId, entities\)/); assert.doesNotMatch(syncPage, /fetch\("\/api\/cloud\/sync\/status"\)/); });
+test("掃描開始時網路狀態為連線中", () => {
+  const request = beginCloudRequest(initialCloudConnectionState(), true);
+  assert.equal(request.state.status, "connecting");
+});
+test("掃描成功後網路狀態為已連線", () => {
+  const request = beginCloudRequest(initialCloudConnectionState(), true);
+  assert.equal(finishCloudRequest(request.state, request.requestId, true, true).status, "connected");
+});
+test("下載成功後網路狀態為已連線", () => {
+  const request = beginCloudRequest(initialCloudConnectionState(), true);
+  assert.equal(finishCloudRequest(request.state, request.requestId, true, true).status, "connected");
+});
+test("雲端請求失敗後網路狀態為連線異常", () => {
+  const request = beginCloudRequest(initialCloudConnectionState(), true);
+  assert.equal(finishCloudRequest(request.state, request.requestId, true, false).status, "error");
+});
+test("請求結束一定清除 pending loading", () => {
+  const request = beginCloudRequest(initialCloudConnectionState(), true);
+  assert.equal(finishCloudRequest(request.state, request.requestId, true, true).pendingRequests, 0);
+});
+test("離線不會被誤判為 API 連線異常", () => {
+  const request = beginCloudRequest(initialCloudConnectionState(), false);
+  assert.equal(request.state.status, "offline");
+  assert.equal(request.shouldRequest, false);
+});
+test("瀏覽器重新上線後回到未檢查而非假裝連線中", () => {
+  assert.equal(browserConnectionChanged({ status: "offline", latestRequestId: 1, pendingRequests: 0 }, true).status, "unchecked");
+});
+test("較舊的並行請求不會覆蓋較新的結果", () => {
+  const first = beginCloudRequest(initialCloudConnectionState(), true);
+  const second = beginCloudRequest(first.state, true);
+  const latest = finishCloudRequest(second.state, second.requestId, true, false);
+  assert.equal(finishCloudRequest(latest, first.requestId, true, true).status, "error");
+});
+test("網路狀態卡使用明確的使用者文字", () => {
+  assert.equal(cloudConnectionLabel("unchecked"), "未檢查");
+  assert.equal(cloudConnectionLabel("connected"), "已連線");
+  assert.equal(cloudConnectionLabel("error"), "連線異常");
+});
+test("同步頁在 finally 清除初始 loading，且卸載後不更新 state", () => {
+  assert.match(syncPage, /finally\(\(\) => \{\s*if \(mountedRef\.current\) setLoading\(false\);/);
+  assert.match(syncPage, /mountedRef\.current = false/);
+});
 test("雲端快照只接受符合 Schema 的資料", () => { const snapshot = parseCloudSnapshot({ reports: [{ reportId: "broken" }], cycles: [] }); assert.equal(snapshot.reports.length, 0); assert.equal(snapshot.invalidReports, 1); });
 test("Supabase timestamptz 會正規化為 Schema 接受的 UTC ISO 時間", () => assert.equal(normalizeCloudTimestamp("2026-07-18T18:00:00+00:00"), "2026-07-18T18:00:00.000Z"));
 test("無效雲端時間不會被猜測為有效資料", () => assert.equal(normalizeCloudTimestamp("not-a-time"), null));
-test("雲端還原計畫只建立本機缺少的資料", () => { const plan = planCloudRestore(cloudSnapshot(), [], []); assert.equal(plan.reports.length, 1); assert.equal(plan.cycles.length, 1); assert.equal(plan.reportConflicts.length, 0); });
-test("雲端同 ID 會列為衝突而不納入還原", () => { const plan = planCloudRestore(cloudSnapshot(), ["cloud-report"], ["cloud-cycle"]); assert.equal(plan.reports.length, 0); assert.equal(plan.cycles.length, 0); assert.deepEqual(plan.reportConflicts, ["cloud-report"]); assert.deepEqual(plan.cycleConflicts, ["cloud-cycle"]); });
+test("雲端還原計畫只建立本機缺少的資料", () => { const plan = planCloudRestore(cloudSnapshot(), [], []); assert.equal(plan.reports.length, 1); assert.equal(plan.cycles.length, 1); assert.equal(plan.existingReports.length, 0); });
+test("一份雲端報告與一輪 PDCA 顯示可下載兩筆", () => { const plan = planCloudRestore(cloudSnapshot(), [], []); assert.equal(plan.reports.length + plan.cycles.length, 2); });
+test("雲端同 ID 顯示已有對應本機資料而不重複還原", () => { const plan = planCloudRestore(cloudSnapshot(), ["cloud-report"], ["cloud-cycle"]); assert.equal(plan.reports.length, 0); assert.equal(plan.cycles.length, 0); assert.deepEqual(plan.existingReports, ["cloud-report"]); assert.deepEqual(plan.existingCycles, ["cloud-cycle"]); });
 test("同步頁只有明確下載操作才寫入本機", () => { assert.match(syncPage, /onClick=\{\(\) => void download\(\)\}/); assert.match(syncPage, /restoreReport\(item\.payload/); assert.match(syncPage, /restoreCycle\(item\.payload\)/); });
 test("同步頁將已同步的同 ID 資料與真正衝突分開說明", () => assert.match(syncPage, /雲端已有對應本機資料/));
+test("已有對應本機資料不會被當成真正衝突", () => {
+  const downloadSource = syncPage.slice(syncPage.indexOf("async function download"), syncPage.indexOf("if (loading)"));
+  assert.match(downloadSource, /existingReports/);
+  assert.doesNotMatch(downloadSource, /syncState: "conflict"/);
+  assert.match(syncPage, /existingEntityIds/);
+});
+test("下載流程只讀取雲端快照，不會呼叫雲端寫入", () => {
+  const downloadSource = syncPage.slice(syncPage.indexOf("async function download"), syncPage.indexOf("if (loading)"));
+  assert.match(downloadSource, /loadCloudSnapshot\(\)/);
+  assert.doesNotMatch(downloadSource, /syncPush\(/);
+});
 test("雲端 pull 排除 soft delete 並驗證回傳格式", () => { assert.match(syncPullRoute, /\.is\("deleted_at", null\)/); assert.match(syncPullRoute, /CloudReportSchema\.safeParse/); assert.match(syncPullRoute, /CloudPdcaCycleSchema\.safeParse/); });
 test("批次 push 僅回傳安全 error code 與 revision", () => { assert.match(syncPushRoute, /CloudErrorCodeSchema\.safeParse/); assert.doesNotMatch(syncPushRoute, /error\.message|error\.details|error\.hint/); });
 test("sync metadata 接受 local_only", () => assert.equal(SyncMetadataSchema.safeParse({ entityId: "r", localUpdatedAt: new Date().toISOString(), cloudRevision: null, lastSyncedHash: null, lastSyncedAt: null, syncState: "local_only", source: "local", pendingOperation: "none" }).success, true));

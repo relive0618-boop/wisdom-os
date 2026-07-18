@@ -37,8 +37,8 @@ export type CloudSnapshot = {
 export type CloudRestorePlan = {
   reports: CloudReport[];
   cycles: CloudPdcaCycle[];
-  reportConflicts: string[];
-  cycleConflicts: string[];
+  existingReports: string[];
+  existingCycles: string[];
   invalid: number;
 };
 
@@ -73,8 +73,8 @@ export function planCloudRestore(snapshot: CloudSnapshot, localReportIds: Iterab
   return {
     reports: missingReports,
     cycles: missingCycles,
-    reportConflicts: snapshot.reports.filter((item) => reports.has(item.reportId)).map((item) => item.reportId),
-    cycleConflicts: snapshot.cycles.filter((item) => cycles.has(item.cycleId)).map((item) => item.cycleId),
+    existingReports: snapshot.reports.filter((item) => reports.has(item.reportId)).map((item) => item.reportId),
+    existingCycles: snapshot.cycles.filter((item) => cycles.has(item.cycleId)).map((item) => item.cycleId),
     invalid: snapshot.invalidReports + snapshot.invalidCycles,
   };
 }
