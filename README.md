@@ -131,7 +131,7 @@ RATE_LIMIT_HASH_SECRET=
 
 Preview Supabase 已完成真实 migration、RLS／Policies／Data API grants 验证与内容 seed：`knowledge_entries` 为 56 笔、`case_entries` 为 30 笔。seed runner 直接保留 Supabase 原生 query result 的 `status`／`statusText`，不使用共享 FIFO 推测 HTTP 状态。Protected Preview smoke test、同帐号跨装置下载与 Account A／B 隔离验收均已通过：云端一份报告与一轮 PDCA 可安全还原为两笔本机资料；同 ID 不会覆盖本机；Account B 无法列出、读取、更新或删除 Account A 的资料；临时验收资料已清除。Production flags 与 credentials 保持未设定。
 
-`20260719_wisdom_os_admin_audit_hardening.sql` 会在数据库层强制 Admin 内容状态机并让内容异动与最小化 audit event 原子完成，同时提供仅 service-role 可走的 canonical seed insert／相同列 no-op 路径。该 migration 尚未套用到 Preview，真人 Admin／Audit 与新的 seed preflight 验收仍待独立批准。
+`20260719_wisdom_os_admin_audit_hardening.sql` 已套用到 Preview 并完成只读复核：四个 workflow／audit trigger、两个固定 search path 的 `SECURITY DEFINER` function 与 function grants 均通过；audit 安全 metadata 为 0，既有 56 条 knowledge 与 30 条 cases 保持为 canonical system rows。canonical seed 的只读 preflight 以稳定 JSON 语义等价比对 56／30 条记录，未写入任何远端资料。真人 Admin 角色、内容 mutation、Audit mutation 与 persistent rate limit 仍待独立验收；Production flags 与 credentials 保持未设定。
 
 已配置 Preview 后，可使用完全只读的 smoke test：
 
