@@ -131,7 +131,7 @@ RATE_LIMIT_HASH_SECRET=
 
 Preview Supabase 已完成真实 migration、RLS／Policies／Data API grants 验证与内容 seed：`knowledge_entries` 为 56 笔、`case_entries` 为 30 笔。seed runner 直接保留 Supabase 原生 query result 的 `status`／`statusText`，不使用共享 FIFO 推测 HTTP 状态。Protected Preview smoke test、同帐号跨装置下载与 Account A／B 隔离验收均已通过：云端一份报告与一轮 PDCA 可安全还原为两笔本机资料；同 ID 不会覆盖本机；Account B 无法列出、读取、更新或删除 Account A 的资料；临时验收资料已清除。Production flags 与 credentials 保持未设定。
 
-`20260719_wisdom_os_admin_audit_hardening.sql` 已套用到 Preview 并完成只读复核：四个 workflow／audit trigger、两个固定 search path 的 `SECURITY DEFINER` function 与 function grants 均通过；audit 安全 metadata 为 0，既有 56 条 knowledge 与 30 条 cases 保持为 canonical system rows。canonical seed 的只读 preflight 以稳定 JSON 语义等价比对 56／30 条记录，未写入任何远端资料。真人 Admin 角色、内容 mutation、Audit mutation 与 persistent rate limit 仍待独立验收；Production flags 与 credentials 保持未设定。
+`20260719_wisdom_os_admin_audit_hardening.sql` 已套用到 Preview 并完成只读复核：四个 workflow／audit trigger、两个固定 search path 的 `SECURITY DEFINER` function 与 function grants 均通过；audit 安全 metadata 为 0，既有 56 条 knowledge 与 30 条 cases 保持为 canonical system rows。canonical seed 的只读 preflight 以稳定 JSON 语义等价比对 56／30 条记录，未写入任何远端资料。真人 Account B Admin／Audit 验收也已通过：普通角色与撤销后的新 JWT 均被 Admin API 以 403 拒绝；临时 Admin 新 JWT 可完成 draft-only create、合法状态转换、编辑限制与软删除。Audit 新增 10 笔（create 2、update 2、status_transition 4、soft_delete 2），拒绝的 mutation 零写入；临时内容保留为软删除，公开 canonical 内容仍为 knowledge 56、cases 30。persistent rate limit 仍待独立验收；Production flags 与 credentials 保持未设定。
 
 已配置 Preview 后，可使用完全只读的 smoke test：
 
@@ -153,8 +153,8 @@ pnpm verify:preview -- --base-url <PREVIEW_URL>
 - [x] 决策历史 + 报告/PDCA 本地持久化
 - [x] OpenAI-compatible 远程 AI + 本地 fallback
 - [x] Zod 输入、输出与报告校验
-- [~] Supabase 云端帐号、RLS 迁移与选择性同步（Preview migration、RLS／grants、内容 seed、Auth、同帐号跨装置下载与 Account A／B 隔离已真实验证；Admin 与 rate limit 仍待验收）
-- [~] 知识与案例管理的审核资料模型（本机状态机与原子 audit 加固已完成；新 Preview migration 与真人 Admin／Audit 验收待独立批准；Production feature flags 保持关闭）
+- [~] Supabase 云端帐号、RLS 迁移与选择性同步（Preview migration、RLS／grants、内容 seed、Auth、同帐号跨装置下载、Account A／B 隔离与 Account B Admin／Audit 验收均已真实验证；persistent rate limit 仍待验收）
+- [~] 知识与案例管理的审核资料模型（本机状态机、原子 audit、Preview migration 与真人 Admin／Audit 验收均已完成；Production feature flags 保持关闭）
 - [ ] 个人决策模型（偏好学习）
 - [ ] 多经典扩展（易经、鬼谷子...）
 - [ ] Stripe 商业化
