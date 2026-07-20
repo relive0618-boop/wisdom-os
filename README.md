@@ -8,7 +8,8 @@
 - **知识库** — 56 条孙子兵法原则，附原文、白话解释、适用边界与风险提示
 - **现代案例** — 30 个情境化综合案例，帮助理解经典原则的现代应用
 - **PDCA 循环追踪** — 将策略报告转化为可执行的待办清单，支持状态跟踪、复盘记录与多轮改善循环
-- **决策历史** — 所有分析记录保存在本地，可随时回溯与继续追踪
+- **决策历史** — 本地优先保存，可选择同步到自己的云端帐户
+- **云端帐户与同步** — Supabase Auth、报告与 PDCA 的按需分批同步、冲突选择与离线保护
 
 ## 快速开始
 
@@ -92,7 +93,7 @@ AI_THINKING_MODE=provider_default
 
 ### Rate limit
 
-`/api/analyze` 使用可替换的服务器端 abstraction，目前为记忆体实现：每个 IP 每分钟最多 10 次，超过后返回 HTTP 429 与 `RATE_LIMITED`。未来可以将同一介面替换为 Redis 或 Supabase，而不改变 API 路由。
+`/api/analyze` 使用服务器端限流 abstraction：每个匿名识别来源与 API route 每分钟最多 10 次，超过后返回 HTTP 429 与 `RATE_LIMITED`。记忆体模式始终可用；持久化模式只有在有效 Supabase URL、Publishable Key、Server Secret、`WISDOM_PERSISTENT_RATE_LIMIT_ENABLED=true` 与至少 32 字元的 server-only `RATE_LIMIT_HASH_SECRET` 都齐全时才会启用，否则 health 与 runtime 都如实回报并使用记忆体模式。IP 只在服务器端规范化后以 route namespace 做 HMAC-SHA256，数据库不保存原始 IP。`20260720100901_wisdom_os_rate_limit_hardening.sql` 采用每个 HMAC／route 一行的原子窗口设计，天然限制 bucket 容量；它尚未套用到 Preview，真人 persistent rate-limit 验收也尚未执行。
 
 ### 测试
 
@@ -110,7 +111,37 @@ pnpm test:e2e   # Playwright，使用 production-like next start
 3. 在 Preview 与 Production 环境分别设置 `AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL`、`AI_TIMEOUT_MS`、`AI_MAX_RETRIES`、`AI_MAX_OUTPUT_TOKENS`、`AI_RESPONSE_FORMAT_MODE`、`AI_TOTAL_BUDGET_MS`、`AI_THINKING_MODE`；不设置也可以零成本运行本地模式。
 4. 部署后访问 `/api/health`，确认 `remote.configured` 是否符合预期。
 
-报告和 PDCA 当前保存在浏览器本机；清除浏览器站点数据会删除这些记录。云端同步仍是后续 Supabase 计划。
+### 云端帐号与同步（v0.4）
+
+云端功能默认关闭，未配置时应用维持原有本地模式，不要求 API Key。启用时仅可公开的 Supabase URL 与 Publishable Key 使用 `NEXT_PUBLIC_` 前缀；`SUPABASE_SECRET_KEY` 与 `RATE_LIMIT_HASH_SECRET` 仅在服务器使用，绝不进入浏览器、localStorage 或 API 回应。
+
+```text
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+SUPABASE_SECRET_KEY=
+NEXT_PUBLIC_WISDOM_CLOUD_SYNC_ENABLED=false
+NEXT_PUBLIC_WISDOM_ADMIN_ENABLED=false
+WISDOM_PERSISTENT_RATE_LIMIT_ENABLED=false
+RATE_LIMIT_HASH_SECRET=
+```
+
+在 Supabase 先执行已批准的 migration。`pnpm seed:supabase` 是完全离线的预检：不读取环境变量、不建立 Supabase client、不会发出网络请求或写入资料。实际 runner 位于拥有 `@supabase/supabase-js` 的 `apps/web` package，避免 pnpm workspace 的跨 package 解析依赖。只有在 Preview 的服务器环境已安全配置且获得独立批准后，才明确执行 `pnpm seed:supabase:apply`。runner 先以 service-role 做只读 preflight：仅允许补入缺少的 canonical `knowledge_entries` 与 `case_entries`，且新列固定为 `published`、active、无 actor。完全相同的既有 system 列会跳过；内容漂移、Admin 管理列、非 published 或已删除列会以安全错误码停止，绝不覆盖、复活或删除资料。两张表不是跨表 transaction，若后段失败会清楚标记部分成功；重跑只会验证相同 system 列，不产生新版本或 audit event。迁移会开启 RLS：用户只能访问自己的报告和 PDCA；公开内容只读取 `published`；管理员角色只取自 JWT `app_metadata.role`。同步永远由使用者在 `/sync` 明确开始，每批最多 25 笔。下载只还原本机缺少的报告与 PDCA；同 ID 的云端资料绝不覆盖或重复写入本机，而是标示为已有对应本机资料。
+
+持久化 rate limit 是可选项：服务器先验证 Vercel forwarded IP、再以带 route namespace 的 HMAC-SHA256 匿名化后才传到数据库，数据库不保存原始 IP；RPC 回传、客户端建立或数据库异常都会安全降级为记忆体限流。`RATE_LIMIT_HASH_SECRET` 仅在服务器读取，至少 32 字元，绝不能使用 `NEXT_PUBLIC_` 前缀。详细作业说明见 `docs/`。
+
+Preview Supabase 已完成真实 migration、RLS／Policies／Data API grants 验证与内容 seed：`knowledge_entries` 为 56 笔、`case_entries` 为 30 笔。seed runner 直接保留 Supabase 原生 query result 的 `status`／`statusText`，不使用共享 FIFO 推测 HTTP 状态。Protected Preview smoke test、同帐号跨装置下载与 Account A／B 隔离验收均已通过：云端一份报告与一轮 PDCA 可安全还原为两笔本机资料；同 ID 不会覆盖本机；Account B 无法列出、读取、更新或删除 Account A 的资料；临时验收资料已清除。Production flags 与 credentials 保持未设定。
+
+`20260719_wisdom_os_admin_audit_hardening.sql` 已套用到 Preview 并完成只读复核：四个 workflow／audit trigger、两个固定 search path 的 `SECURITY DEFINER` function 与 function grants 均通过；audit 安全 metadata 为 0，既有 56 条 knowledge 与 30 条 cases 保持为 canonical system rows。canonical seed 的只读 preflight 以稳定 JSON 语义等价比对 56／30 条记录，未写入任何远端资料。真人 Account B Admin／Audit 验收也已通过：普通角色与撤销后的新 JWT 均被 Admin API 以 403 拒绝；临时 Admin 新 JWT 可完成 draft-only create、合法状态转换、编辑限制与软删除。Audit 新增 10 笔（create 2、update 2、status_transition 4、soft_delete 2），拒绝的 mutation 零写入；临时内容保留为软删除，公开 canonical 内容仍为 knowledge 56、cases 30。持久化 rate-limit 本机加固与自动化测试已完成，但 `20260720100901_wisdom_os_rate_limit_hardening.sql` 尚未套用 Preview，尚未进行真人验收；Production flags 与 credentials 保持未设定。
+
+已配置 Preview 后，可使用完全只读的 smoke test：
+
+```bash
+pnpm verify:preview -- --base-url <PREVIEW_URL>
+```
+
+它只接受 HTTPS URL（本机须额外传 `--allow-local`）、只发送 GET，不读取任何 server secret，也不会建立帐号、登入或改动云端资料。
+
+通过 pnpm script 传参时，`--` 是参数分隔符，verifier 会安全忽略最前方的单一分隔符。若 Preview 受 Vercel Deployment Protection 保护，可额外传 `--vercel-protected`，让官方 `vercel curl` 使用当前 Vercel CLI 登录状态进行只读 GET；不会保存、显示或手动传递任何 Protection 凭证。
 
 ## 路线图
 
@@ -122,8 +153,8 @@ pnpm test:e2e   # Playwright，使用 production-like next start
 - [x] 决策历史 + 报告/PDCA 本地持久化
 - [x] OpenAI-compatible 远程 AI + 本地 fallback
 - [x] Zod 输入、输出与报告校验
-- [ ] Supabase 云同步
-- [ ] 管理后台（知识 CRUD + 审核流程）
+- [~] Supabase 云端帐号、RLS 迁移与选择性同步（Preview migration、RLS／grants、内容 seed、Auth、同帐号跨装置下载、Account A／B 隔离与 Account B Admin／Audit 验收均已真实验证；persistent rate limit 仍待验收）
+- [~] 知识与案例管理的审核资料模型（本机状态机、原子 audit、Preview migration 与真人 Admin／Audit 验收均已完成；Production feature flags 保持关闭）
 - [ ] 个人决策模型（偏好学习）
 - [ ] 多经典扩展（易经、鬼谷子...）
 - [ ] Stripe 商业化

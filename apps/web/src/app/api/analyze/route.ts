@@ -4,28 +4,37 @@ import casesData from "@/lib/cases.json" with { type: "json" };
 import { createEngine } from "@/lib/engine.js";
 import { AnalyzeInputSchema, AnalyzeResponseSchema, ReportSchema } from "@wisdom/shared";
 import { requestRemoteReport } from "@/lib/ai";
-import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
+import { checkRateLimitForRequest, getClientIp } from "@/lib/rateLimit";
 
 const { retrieve, buildLocalReport, buildPrompt } = createEngine(knowledgeData, casesData);
 
-function errorResponse(status: number, code: string, message: string) {
-  return NextResponse.json({ error: { code, message } }, { status });
+function rateLimitHeaders(rate: { remaining: number; resetAt: number }, includeRetryAfter = false) {
+  const headers = new Headers({
+    "X-RateLimit-Remaining": String(rate.remaining),
+    "X-RateLimit-Reset": String(Math.floor(rate.resetAt / 1000)),
+  });
+  if (includeRetryAfter) headers.set("Retry-After", String(Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000))));
+  return headers;
+}
+
+function errorResponse(status: number, code: string, message: string, headers?: Headers) {
+  return NextResponse.json({ error: { code, message } }, { status, headers });
 }
 
 export async function POST(request: Request) {
-  const rate = checkRateLimit(getClientIp(request));
-  if (!rate.allowed) return errorResponse(429, "RATE_LIMITED", "请求过于频繁，请稍后再试。");
+  const rate = await checkRateLimitForRequest(getClientIp(request));
+  if (!rate.allowed) return errorResponse(429, "RATE_LIMITED", "请求过于频繁，请稍后再试。", rateLimitHeaders(rate, true));
 
   let rawBody: unknown;
   try {
     rawBody = await request.json();
   } catch {
-    return errorResponse(400, "INVALID_JSON", "请求必须是有效 JSON。");
+    return errorResponse(400, "INVALID_JSON", "请求必须是有效 JSON。", rateLimitHeaders(rate));
   }
 
   const input = AnalyzeInputSchema.safeParse(rawBody);
   if (!input.success) {
-    return errorResponse(422, "INVALID_INPUT", "输入内容不符合要求。");
+    return errorResponse(422, "INVALID_INPUT", "输入内容不符合要求。", rateLimitHeaders(rate));
   }
 
   try {
@@ -104,8 +113,8 @@ export async function POST(request: Request) {
       remoteSchemaIssueCount: remote.providerSchemaIssueCount,
       remoteSchemaIssuePaths: remote.providerSchemaIssuePaths,
     });
-    return NextResponse.json(response);
+    return NextResponse.json(response, { headers: rateLimitHeaders(rate) });
   } catch {
-    return errorResponse(500, "INTERNAL_ERROR", "分析服务暂时无法完成请求。");
+    return errorResponse(500, "INTERNAL_ERROR", "分析服务暂时无法完成请求。", rateLimitHeaders(rate));
   }
 }

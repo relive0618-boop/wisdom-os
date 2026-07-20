@@ -29,6 +29,9 @@ yarn-debug.log*
 # vercel
 .vercel
 
+# Supabase CLI project-link metadata
+supabase/.temp/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

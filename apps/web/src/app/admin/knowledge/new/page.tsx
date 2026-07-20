@@ -1,0 +1,1 @@
+import { AdminLayout } from "@/components/admin/AdminLayout"; export default function Page() { return <AdminLayout title="新增知識"><p className="mt-5 text-sm">建立草稿後，依序送審、發布；已發布內容不可直接覆寫。</p></AdminLayout>; }

@@ -9,13 +9,10 @@
     "test": "pnpm -r test",
     "test:e2e": "pnpm --filter web test:e2e",
     "typecheck": "pnpm -r typecheck",
-    "preinstall": "npx only-allow pnpm"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "sharp",
-      "unrs-resolver"
-    ]
+    "preinstall": "npx only-allow pnpm",
+    "seed:supabase": "pnpm --filter web seed:supabase",
+    "seed:supabase:apply": "pnpm --filter web seed:supabase:apply",
+    "verify:preview": "pnpm --filter web exec tsx ../../scripts/verify-preview.mts"
   },
   "engines": {
     "node": ">=20"
