@@ -99,6 +99,22 @@ test("兩份已套用 migration 保持原始內容", () => {
   assert.equal(createHash("sha256").update(adminAuditMigration).digest("hex"), "f49ddcf4fd0f9a5f4db36534397fe6056d4348abc5a6479309a9e392b06e2d92");
 });
 test("新 migration 以 identifier 與 route 單行主鍵提供容量上界", () => assert.match(hardenedMigration, /primary key \(identifier_hash, route\)/));
+test("rate-limit 收斂以 migration runner 相容的隱式交易 DO block 執行", () => {
+  const convergence = hardenedMigration.match(/do \$\$\s*begin([\s\S]*?)end;\s*\$\$;/i);
+  assert.ok(convergence);
+  assert.match(convergence[0], /^do \$\$\s*begin\s+lock table public\.rate_limit_buckets in access exclusive mode;/i);
+  assert.match(convergence[0], /delete from public\.rate_limit_buckets[\s\S]*alter table public\.rate_limit_buckets[\s\S]*primary key \(identifier_hash, route\)/i);
+  assert.doesNotMatch(hardenedMigration.replace(convergence[0], ""), /lock table public\.rate_limit_buckets/i);
+});
+test("rate-limit migration 不使用與 runner 衝突的顯式 transaction 控制語句", () => {
+  assert.doesNotMatch(hardenedMigration, /^\s*(?:begin|commit|rollback)\s*;\s*$/im);
+});
+test("pg_cron extension 在收斂 DO block 前建立", () => {
+  const extensionOffset = hardenedMigration.indexOf("create extension if not exists pg_cron");
+  const convergenceOffset = hardenedMigration.indexOf("do $$\nbegin\n  lock table public.rate_limit_buckets");
+  assert.ok(extensionOffset >= 0);
+  assert.ok(convergenceOffset > extensionOffset);
+});
 test("新 migration 僅允許 64 位小寫 hex HMAC", () => assert.match(hardenedMigration, /identifier_hash ~ '\^\[0-9a-f\]\{64\}\$'/));
 test("新 migration 的 route 僅允許 analyze", () => assert.match(hardenedMigration, /route = '\/api\/analyze'/));
 test("新 migration 固定正式 limit 與 window", () => { assert.match(hardenedMigration, /limit_count <> 10/); assert.match(hardenedMigration, /window_seconds <> 60/); });

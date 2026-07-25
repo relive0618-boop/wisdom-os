@@ -2,43 +2,50 @@
 -- only rate_limit_buckets and its protected RPC; no business data is changed.
 create extension if not exists pg_cron;
 
-lock table public.rate_limit_buckets in access exclusive mode;
+-- Supabase's migration runner does not provide a usable top-level transaction
+-- for a bare LOCK TABLE. A DO block runs as one implicit transaction, keeping
+-- the legacy-data convergence and key change atomic without BEGIN/COMMIT.
+do $$
+begin
+  lock table public.rate_limit_buckets in access exclusive mode;
 
--- Remove malformed legacy buckets, then retain the most recent valid legacy
--- window for each identifier/route pair before collapsing to one row per pair.
-delete from public.rate_limit_buckets
-where identifier_hash !~ '^[0-9a-f]{64}$'
-   or route <> '/api/analyze'
-   or request_count < 0;
+  -- Remove malformed legacy buckets, then retain the most recent valid legacy
+  -- window for each identifier/route pair before collapsing to one row per pair.
+  delete from public.rate_limit_buckets
+  where identifier_hash !~ '^[0-9a-f]{64}$'
+     or route <> '/api/analyze'
+     or request_count < 0;
 
--- Clamp pre-existing rows before installing the bounded counter constraint.
-update public.rate_limit_buckets
-set request_count = 11
-where request_count > 11;
+  -- Clamp pre-existing rows before installing the bounded counter constraint.
+  update public.rate_limit_buckets
+  set request_count = 11
+  where request_count > 11;
 
-with ranked as (
-  select ctid,
-         row_number() over (partition by identifier_hash, route order by window_start desc, updated_at desc) as position
-  from public.rate_limit_buckets
-)
-delete from public.rate_limit_buckets as bucket
-using ranked
-where bucket.ctid = ranked.ctid
-  and ranked.position > 1;
+  with ranked as (
+    select ctid,
+           row_number() over (partition by identifier_hash, route order by window_start desc, updated_at desc) as position
+    from public.rate_limit_buckets
+  )
+  delete from public.rate_limit_buckets as bucket
+  using ranked
+  where bucket.ctid = ranked.ctid
+    and ranked.position > 1;
 
--- Expire abandoned identifier/route pairs during the convergence migration.
-delete from public.rate_limit_buckets
-where updated_at < now() - interval '15 minutes';
+  -- Expire abandoned identifier/route pairs during the convergence migration.
+  delete from public.rate_limit_buckets
+  where updated_at < now() - interval '15 minutes';
 
-alter table public.rate_limit_buckets
-  drop constraint if exists rate_limit_buckets_pkey;
+  alter table public.rate_limit_buckets
+    drop constraint if exists rate_limit_buckets_pkey;
 
-alter table public.rate_limit_buckets
-  drop constraint if exists rate_limit_buckets_request_count_nonnegative,
-  add constraint rate_limit_buckets_pkey primary key (identifier_hash, route),
-  add constraint rate_limit_buckets_identifier_hash_format check (identifier_hash ~ '^[0-9a-f]{64}$'),
-  add constraint rate_limit_buckets_route_allowlist check (route = '/api/analyze'),
-  add constraint rate_limit_buckets_request_count_range check (request_count between 0 and 11);
+  alter table public.rate_limit_buckets
+    drop constraint if exists rate_limit_buckets_request_count_nonnegative,
+    add constraint rate_limit_buckets_pkey primary key (identifier_hash, route),
+    add constraint rate_limit_buckets_identifier_hash_format check (identifier_hash ~ '^[0-9a-f]{64}$'),
+    add constraint rate_limit_buckets_route_allowlist check (route = '/api/analyze'),
+    add constraint rate_limit_buckets_request_count_range check (request_count between 0 and 11);
+end;
+$$;
 
 create index if not exists rate_limit_buckets_updated_at_idx
   on public.rate_limit_buckets(updated_at);
