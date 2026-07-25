@@ -93,7 +93,7 @@ AI_THINKING_MODE=provider_default
 
 ### Rate limit
 
-`/api/analyze` 使用服务器端限流 abstraction：每个匿名识别来源与 API route 每分钟最多 10 次，超过后返回 HTTP 429 与 `RATE_LIMITED`。记忆体模式始终可用；持久化模式只有在有效 Supabase URL、Publishable Key、Server Secret、`WISDOM_PERSISTENT_RATE_LIMIT_ENABLED=true` 与至少 32 字元的 server-only `RATE_LIMIT_HASH_SECRET` 都齐全时才会启用，否则 health 与 runtime 都如实回报并使用记忆体模式。IP 只在服务器端规范化后以 route namespace 做 HMAC-SHA256，数据库不保存原始 IP。`20260720100901_wisdom_os_rate_limit_hardening.sql` 保持每个 HMAC／route 一行的原子窗口，并以 15 分钟 TTL、五分钟一次的专属 `pg_cron` 清理及每列最多 11 次的硬上限限制陈旧 bucket 累积。它的收敛段使用 migration runner 相容的隐式交易 `DO` block：已在两次从零本机重建与带旧 bucket 的收敛情境通过；先前 Preview 套用在第一个不相容的裸 `LOCK TABLE` 前安全停止，未改变远端 schema 或 cron。Preview 重试、Cron 与 persistent rate-limit 真人验收仍须独立批准。
+`/api/analyze` 使用服务器端限流 abstraction：每个匿名识别来源与 API route 每分钟最多 10 次，超过后返回 HTTP 429 与 `RATE_LIMITED`。记忆体模式始终可用；持久化模式只有在有效 Supabase URL、Publishable Key、Server Secret、`WISDOM_PERSISTENT_RATE_LIMIT_ENABLED=true` 与至少 32 字元的 server-only `RATE_LIMIT_HASH_SECRET` 都齐全时才会启用，否则 health 与 runtime 都如实回报并使用记忆体模式。IP 只在服务器端规范化后以 route namespace 做 HMAC-SHA256，数据库不保存原始 IP。`20260720100901_wisdom_os_rate_limit_hardening.sql` 已套用至 Preview：每个 HMAC／route 一行的原子窗口、15 分钟 TTL、五分钟一次的专属 `pg_cron` 清理与每列最多 11 次的硬上限都已通过只读验证与受控 10+1 真人验收；Cron 在 TTL 后已自动清理验收 bucket。Production 仍保持未配置。
 
 ### 测试
 
@@ -131,7 +131,7 @@ RATE_LIMIT_HASH_SECRET=
 
 Preview Supabase 已完成真实 migration、RLS／Policies／Data API grants 验证与内容 seed：`knowledge_entries` 为 56 笔、`case_entries` 为 30 笔。seed runner 直接保留 Supabase 原生 query result 的 `status`／`statusText`，不使用共享 FIFO 推测 HTTP 状态。Protected Preview smoke test、同帐号跨装置下载与 Account A／B 隔离验收均已通过：云端一份报告与一轮 PDCA 可安全还原为两笔本机资料；同 ID 不会覆盖本机；Account B 无法列出、读取、更新或删除 Account A 的资料；临时验收资料已清除。Production flags 与 credentials 保持未设定。
 
-`20260719_wisdom_os_admin_audit_hardening.sql` 已套用到 Preview 并完成只读复核：四个 workflow／audit trigger、两个固定 search path 的 `SECURITY DEFINER` function 与 function grants 均通过；audit 安全 metadata 为 0，既有 56 条 knowledge 与 30 条 cases 保持为 canonical system rows。canonical seed 的只读 preflight 以稳定 JSON 语义等价比对 56／30 条记录，未写入任何远端资料。真人 Account B Admin／Audit 验收也已通过：普通角色与撤销后的新 JWT 均被 Admin API 以 403 拒绝；临时 Admin 新 JWT 可完成 draft-only create、合法状态转换、编辑限制与软删除。Audit 新增 10 笔（create 2、update 2、status_transition 4、soft_delete 2），拒绝的 mutation 零写入；临时内容保留为软删除，公开 canonical 内容仍为 knowledge 56、cases 30。持久化 rate-limit 的 migration 已完成两次从零本机重建、旧 bucket 收敛与 cron 唯一性验证；Preview 初次套用安全停止且远端未变，修复后的 migration 仍待独立批准重试。Production flags 与 credentials 保持未设定。
+`20260719_wisdom_os_admin_audit_hardening.sql` 已套用到 Preview 并完成只读复核：四个 workflow／audit trigger、两个固定 search path 的 `SECURITY DEFINER` function 与 function grants 均通过；audit 安全 metadata 为 0，既有 56 条 knowledge 与 30 条 cases 保持为 canonical system rows。canonical seed 的只读 preflight 以稳定 JSON 语义等价比对 56／30 条记录，未写入任何远端资料。真人 Account B Admin／Audit 验收也已通过：普通角色与撤销后的新 JWT 均被 Admin API 以 403 拒绝；临时 Admin 新 JWT 可完成 draft-only create、合法状态转换、编辑限制与软删除。Audit 新增 10 笔（create 2、update 2、status_transition 4、soft_delete 2），拒绝的 mutation 零写入；临时内容保留为软删除，公开 canonical 内容仍为 knowledge 56、cases 30。持久化 rate-limit migration、Cron、TTL 自动清理与受控 10+1 验收也已通过。Production flags 与 credentials 保持未设定。
 
 已配置 Preview 后，可使用完全只读的 smoke test：
 
@@ -153,7 +153,7 @@ pnpm verify:preview -- --base-url <PREVIEW_URL>
 - [x] 决策历史 + 报告/PDCA 本地持久化
 - [x] OpenAI-compatible 远程 AI + 本地 fallback
 - [x] Zod 输入、输出与报告校验
-- [~] Supabase 云端帐号、RLS 迁移与选择性同步（Preview migration、RLS／grants、内容 seed、Auth、同帐号跨装置下载、Account A／B 隔离与 Account B Admin／Audit 验收均已真实验证；persistent rate limit 的 Preview migration、Cron 与真人验收仍待独立批准）
+- [~] Supabase 云端帐号、RLS 迁移与选择性同步（Preview migration、RLS／grants、内容 seed、Auth、同帐号跨装置下载、Account A／B 隔离、Admin／Audit 与 persistent rate limit 的 Preview 验收均已真实验证；Production 仍保持关闭）
 - [~] 知识与案例管理的审核资料模型（本机状态机、原子 audit、Preview migration 与真人 Admin／Audit 验收均已完成；Production feature flags 保持关闭）
 - [ ] 个人决策模型（偏好学习）
 - [ ] 多经典扩展（易经、鬼谷子...）
