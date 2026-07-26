@@ -10,9 +10,13 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/lib/*.test.ts src/lib/*.test.js",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "seed:supabase": "tsx scripts/seed-supabase-content.ts --dry-run",
+    "seed:supabase:apply": "tsx scripts/seed-supabase-content.ts --apply"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.1",
+    "@supabase/supabase-js": "^2.110.3",
     "@wisdom/shared": "workspace:*",
     "next": "16.2.10",
     "react": "19.2.4",
@@ -30,11 +34,5 @@
     "tailwindcss": "^4",
     "tsx": "^4.23.0",
     "typescript": "^5"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "sharp",
-      "unrs-resolver"
-    ]
   }
 }

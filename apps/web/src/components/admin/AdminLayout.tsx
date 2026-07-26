@@ -1,0 +1,2 @@
+import Link from "next/link";
+export function AdminLayout({ title, children }: { title: string; children: React.ReactNode }) { return <section className="mx-auto max-w-6xl p-6 md:p-12"><nav className="mb-5 flex gap-4 text-sm"><Link href="/admin">總覽</Link><Link href="/admin/knowledge">知識</Link><Link href="/admin/cases">案例</Link><Link href="/admin/audit">Audit</Link></nav><h1 className="font-serif text-3xl">{title}</h1>{children}</section>; }

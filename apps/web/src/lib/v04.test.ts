@@ -1,0 +1,397 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { AnalyzeInputSchema, AnalyzeResponseSchema, CloudErrorCodeSchema, CloudMutationSchema, PdcaCycleSchema, ReportSchema, SyncMetadataSchema, SyncPushRequestSchema } from "@wisdom/shared";
+import { canonicalSyncPayload, conflictDuplicateId, metadataAfterPushResult, metadataEntityId, parseCloudSnapshot, planCloudRestore, planCloudSync, stableHash, syncPayloadHash, syncPush, SYNC_BATCH_SIZE } from "./cloud/sync";
+import { claimsAreAdmin, claimsUserId } from "./supabase/claims";
+import { adminAuthorization } from "./admin/authorization";
+import { canEdit, canTransition } from "./admin/contentTransitions";
+import { safeAuditMetadata } from "./admin/safeAuditMetadata";
+import { batches, summarizeResults } from "./sync/batchProcessor";
+import { planSync } from "./sync/syncPlanner";
+import { resolveConflict } from "./sync/conflictResolver";
+import { migrationProgress } from "./sync/migrationRunner";
+import { normalizeCloudTimestamp } from "./cloud/timestamp";
+import {
+  beginCloudRequest,
+  browserConnectionChanged,
+  cloudConnectionLabel,
+  finishCloudRequest,
+  initialCloudConnectionState,
+} from "./cloud/connectionState";
+
+const migration = readFileSync(resolve(process.cwd(), "../../supabase/migrations/20260715_wisdom_os_v04.sql"), "utf8");
+const syncHardeningMigration = readFileSync(resolve(process.cwd(), "../../supabase/migrations/20260726_wisdom_os_sync_concurrency_hardening.sql"), "utf8");
+const authForm = readFileSync(resolve(process.cwd(), "src/components/auth/AuthForm.tsx"), "utf8");
+const resetPasswordForm = readFileSync(resolve(process.cwd(), "src/components/auth/ResetPasswordForm.tsx"), "utf8");
+const resetPasswordPage = readFileSync(resolve(process.cwd(), "src/app/reset-password/page.tsx"), "utf8");
+const callbackRoute = readFileSync(resolve(process.cwd(), "src/app/auth/callback/route.ts"), "utf8");
+const recoveryRoute = readFileSync(resolve(process.cwd(), "src/app/auth/recovery/route.ts"), "utf8");
+const routeClient = readFileSync(resolve(process.cwd(), "src/lib/supabase/route.ts"), "utf8");
+const browserClient = readFileSync(resolve(process.cwd(), "src/lib/supabase/client.ts"), "utf8");
+const syncPage = readFileSync(resolve(process.cwd(), "src/app/sync/page.tsx"), "utf8");
+const syncPushRoute = readFileSync(resolve(process.cwd(), "src/app/api/cloud/sync/push/route.ts"), "utf8");
+const cloudServer = readFileSync(resolve(process.cwd(), "src/lib/cloud/server.ts"), "utf8");
+const reportCloudRoute = readFileSync(resolve(process.cwd(), "src/app/api/cloud/reports/[reportId]/route.ts"), "utf8");
+const pdcaCloudRoute = readFileSync(resolve(process.cwd(), "src/app/api/cloud/pdca/[cycleId]/route.ts"), "utf8");
+const contentEditor = readFileSync(resolve(process.cwd(), "src/components/admin/ContentEditor.tsx"), "utf8");
+const syncPullRoute = readFileSync(resolve(process.cwd(), "src/app/api/cloud/sync/pull/route.ts"), "utf8");
+const proxy = readFileSync(resolve(process.cwd(), "src/proxy.ts"), "utf8");
+
+const cloudReportPayload = AnalyzeResponseSchema.parse({
+  decisionId: "cloud-decision",
+  reportId: "cloud-report",
+  cycleId: "cloud-cycle",
+  retrievedAt: "2026-07-18T00:00:00.000Z",
+  report: ReportSchema.parse({
+    decisionId: "cloud-decision", reportId: "cloud-report", mode: "local", category: "创业", problem_summary: "雲端決策", core_conflict: "測試衝突", situation_assessment: "測試評估",
+    citations: [{ id: "one", chapter: "一", title: "一", source: "一" }, { id: "two", chapter: "二", title: "二", source: "二" }],
+    strategies: [{ name: "甲", position: "甲", actions: ["甲"], suitable_when: "甲", risk: "甲" }, { name: "乙", position: "乙", actions: ["乙"], suitable_when: "乙", risk: "乙" }],
+    recommended_strategy: "甲", risks: ["甲"], action_plan_7d: ["1", "2", "3", "4", "5", "6", "7"], review_questions: ["甲"], disclaimer: "甲",
+  }),
+});
+const cloudCyclePayload = PdcaCycleSchema.parse({ id: "cloud-cycle", cycleId: "cloud-cycle", reportId: "cloud-report", decisionId: "cloud-decision", cycleNumber: 1, reportTitle: "雲端決策", reportCategory: "创业", startedAt: "2026-07-18T00:00:00.000Z", completedAt: null, items: [], checkins: [], reflection: null });
+function cloudSnapshot() {
+  return parseCloudSnapshot({
+    reports: [{ reportId: "cloud-report", decisionId: "cloud-decision", title: "雲端決策", category: "创业", payload: cloudReportPayload, revision: 1, deviceId: "device", clientUpdatedAt: "2026-07-18T00:00:00.000Z", updatedAt: "2026-07-18T00:00:00.000Z", deletedAt: null }],
+    cycles: [{ cycleId: "cloud-cycle", reportId: "cloud-report", payload: cloudCyclePayload, revision: 1, deviceId: "device", clientUpdatedAt: "2026-07-18T00:00:00.000Z", updatedAt: "2026-07-18T00:00:00.000Z", deletedAt: null }],
+  });
+}
+
+test("cloud error code 維持封閉集合", () => assert.equal(CloudErrorCodeSchema.safeParse("CLOUD_INTERNAL_ERROR").success, true));
+test("忘記密碼導向 server recovery route 建立 session", () => assert.match(authForm, /mode === "forgot" \? "\/auth\/recovery\?next=%2Freset-password" : "\/auth\/callback"/));
+test("設定新密碼頁不在伺服器端提前導向登入", () => assert.doesNotMatch(resetPasswordPage, /redirect\(|getVerifiedClaims\(/));
+test("設定新密碼僅透過 Supabase 更新密碼", () => assert.match(resetPasswordForm, /client\.auth\.updateUser\(\{ password \}\)/));
+test("設定新密碼不洩漏 Supabase 原始錯誤", () => assert.doesNotMatch(resetPasswordForm, /error\.message|error\.details|error\.hint/));
+test("瀏覽器 client 明確啟用 URL session 偵測", () => assert.match(browserClient, /detectSessionInUrl: true/));
+test("設定新密碼頁不重複交換已由瀏覽器處理的 PKCE code", () => assert.doesNotMatch(resetPasswordForm, /exchangeCodeForSession\(code\)/));
+test("設定新密碼頁等待瀏覽器 recovery session", () => assert.match(resetPasswordForm, /client\.auth\.onAuthStateChange/));
+test("設定新密碼頁支援 recovery token hash", () => assert.match(resetPasswordForm, /verifyOtp\(\{ token_hash: tokenHash, type: "recovery" \}\)/));
+test("設定新密碼頁在驗證後移除網址憑證", () => assert.match(resetPasswordForm, /window\.history\.replaceState\(\{\}, document\.title, "\/reset-password"\)/));
+test("Auth callback 將 Supabase Session Cookie 寫入 redirect response", () => { assert.match(routeClient, /response\.cookies\.set\(name, value, options\)/); assert.match(callbackRoute, /getRouteSupabaseClient\(response\)/); });
+test("Recovery callback 支援 PKCE code 並將 session 寫入 redirect response", () => { assert.match(recoveryRoute, /exchangeCodeForSession\(code\)/); assert.match(recoveryRoute, /getRouteSupabaseClient\(response\)/); });
+test("Recovery callback 支援 token hash 格式且限制為 recovery 類型", () => assert.match(recoveryRoute, /verifyOtp\(\{ token_hash: tokenHash, type: "recovery" \}\)/));
+test("未知 cloud error code 被拒絕", () => assert.equal(CloudErrorCodeSchema.safeParse("SQL_ERROR").success, false));
+test("cloud mutation 不接受無 payload", () => assert.equal(CloudMutationSchema.safeParse({}).success, false));
+test("cloud mutation 不接受負 revision", () => assert.equal(CloudMutationSchema.safeParse({ payload: {}, expectedRevision: -1 }).success, false));
+test("claims 接受 subject", () => assert.equal(claimsUserId({ sub: "user-1" }), "user-1"));
+test("claims 拒絕缺少 subject", () => assert.equal(claimsUserId({}), null));
+test("user metadata admin 不授權", () => assert.equal(claimsAreAdmin({ app_metadata: {}, user_metadata: { role: "admin" } } as never), false));
+test("app metadata admin 授權", () => assert.equal(claimsAreAdmin({ app_metadata: { role: "admin" } }), true));
+test("app metadata 非 admin 拒絕", () => assert.equal(claimsAreAdmin({ app_metadata: { role: "editor" } }), false));
+test("stable hash 固定 64 hex", async () => assert.match(await stableHash({ a: 1 }), /^[a-f0-9]{64}$/));
+test("stable hash 相同輸入相同", async () => assert.equal(await stableHash({ a: 1 }), await stableHash({ a: 1 })));
+test("stable hash 不同輸入不同", async () => assert.notEqual(await stableHash({ a: 1 }), await stableHash({ a: 2 })));
+test("duplicate id 保留來源識別", () => assert.match(conflictDuplicateId("report-a"), /^report-a-copy-/));
+test("sync batch size 固定 25", () => assert.equal(SYNC_BATCH_SIZE, 25));
+test("sync push 最多 25 entities", () => { const entities = Array.from({ length: 26 }, (_, index) => ({ entityType: "report" as const, entityId: String(index), payload: {}, hash: "a".repeat(64) })); assert.equal(SyncPushRequestSchema.safeParse({ deviceId: "d", entities }).success, false); });
+test("同步 metadata 以資料類型區隔相同 ID", () => { assert.equal(metadataEntityId("report", "same"), "report:same"); assert.equal(metadataEntityId("pdca", "same"), "pdca:same"); });
+test("手動同步會送出本機資料並保留伺服器 revision", async () => {
+  let received: unknown = null;
+  const results = await syncPush("device-1", [{ entityType: "report", entityId: "report-1", payload: { safe: true }, revision: null, updatedAt: "2026-07-17T00:00:00.000Z", deletedAt: null, deviceId: "device-1" }], async (_input, init) => {
+    received = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ results: [{ entityType: "report", entityId: "report-1", success: true, operation: "upload_create", cloudRevision: 1, errorCode: null }] }), { status: 200 });
+  });
+  assert.equal((received as { entities: Array<{ hash: string }> }).entities[0].hash.length, 64);
+  assert.deepEqual(results.map(({ entityId, success, cloudRevision }) => ({ entityId, success, cloudRevision })), [{ entityId: "report-1", success: true, cloudRevision: 1 }]);
+});
+test("手動同步保留單筆失敗，讓本機資料可稍後重試", async () => {
+  const results = await syncPush("device-1", [{ entityType: "pdca", entityId: "cycle-1", payload: { safe: true }, revision: 1, updatedAt: null, deletedAt: null, deviceId: "device-1" }], async () => new Response(JSON.stringify({ results: [{ entityType: "pdca", entityId: "cycle-1", success: false, operation: "upload_update", cloudRevision: 2, errorCode: "CLOUD_CONFLICT" }] }), { status: 200 }));
+  assert.deepEqual(results.map(({ success, errorCode, cloudRevision }) => ({ success, errorCode, cloudRevision })), [{ success: false, errorCode: "CLOUD_CONFLICT", cloudRevision: 2 }]);
+});
+test("report delete 成功只建立一次 RPC 並回傳空 204", () => {
+  assert.match(reportCloudRoute, /deleteCloudEntity\("reports"/);
+  assert.equal((cloudServer.match(/context\.client\.rpc\(/g) ?? []).length, 1);
+  assert.match(cloudServer, /if \(status === "deleted"\) return new NextResponse\(null, \{ status: 204 \}\);/);
+});
+test("PDCA delete 成功只建立一次 RPC 並回傳空 204", () => {
+  assert.match(pdcaCloudRoute, /deleteCloudEntity\("pdca"/);
+  assert.match(cloudServer, /new NextResponse\(null, \{ status: 204 \}\)/);
+  assert.doesNotMatch(cloudServer, /operation === "delete" \? 204/);
+});
+test("delete revision conflict 保持 HTTP 409 CLOUD_CONFLICT，不會誤報 204", () => {
+  assert.match(cloudServer, /NextResponse\.json\(\{ error: \{ code: "CLOUD_CONFLICT" \}, cloudRevision \}, \{ status: 409 \}\)/);
+  assert.match(cloudServer, /if \(status === "deleted"\) return new NextResponse/);
+});
+const trustedSyncMetadata = SyncMetadataSchema.parse({
+  entityId: "report:trusted", localUpdatedAt: "2026-07-26T00:00:00.000Z", cloudRevision: 4,
+  lastSyncedHash: "a".repeat(64), lastSyncedAt: "2026-07-26T00:00:00.000Z",
+  syncState: "synced", source: "both", pendingOperation: "none",
+});
+test("網路失敗保留既有可信 metadata", () => {
+  const next = metadataAfterPushResult(trustedSyncMetadata, { entityType: "report", entityId: "trusted", attempted: true, success: false, operation: "upload_update", cloudRevision: null, errorCode: "CLOUD_TEMPORARILY_UNAVAILABLE", hash: "b".repeat(64), updatedAt: "2026-07-26T01:00:00.000Z" }, "2026-07-26T01:00:00.000Z");
+  assert.equal(next.cloudRevision, 4);
+  assert.equal(next.lastSyncedHash, trustedSyncMetadata.lastSyncedHash);
+  assert.equal(next.lastSyncedAt, trustedSyncMetadata.lastSyncedAt);
+  assert.equal(next.syncState, "error");
+  assert.equal(next.pendingOperation, "update");
+});
+test("CLOUD_CONFLICT 保留可信 hash 並採用伺服器 revision", () => {
+  const next = metadataAfterPushResult(trustedSyncMetadata, { entityType: "report", entityId: "trusted", attempted: true, success: false, operation: "upload_update", cloudRevision: 5, errorCode: "CLOUD_CONFLICT", hash: "b".repeat(64), updatedAt: null }, "2026-07-26T01:00:00.000Z");
+  assert.equal(next.cloudRevision, 5);
+  assert.equal(next.lastSyncedHash, trustedSyncMetadata.lastSyncedHash);
+  assert.equal(next.lastSyncedAt, trustedSyncMetadata.lastSyncedAt);
+  assert.equal(next.syncState, "conflict");
+  assert.equal(next.pendingOperation, "update");
+});
+test("未送出的取消項目維持 pending 且不清空可信 metadata", () => {
+  const next = metadataAfterPushResult(trustedSyncMetadata, { entityType: "report", entityId: "trusted", attempted: false, success: false, operation: "upload_update", cloudRevision: 4, errorCode: "CLOUD_CANCELLED", hash: "b".repeat(64), updatedAt: null }, "2026-07-26T01:00:00.000Z");
+  assert.equal(next.cloudRevision, 4);
+  assert.equal(next.lastSyncedHash, trustedSyncMetadata.lastSyncedHash);
+  assert.equal(next.lastSyncedAt, trustedSyncMetadata.lastSyncedAt);
+  assert.equal(next.syncState, "pending_upload");
+  assert.equal(next.pendingOperation, "update");
+});
+test("同步頁會以真實規劃結果呼叫 push API，而不是只讀取狀態", () => { assert.match(syncPage, /planCloudSync/); assert.match(syncPage, /syncPush\(getOrCreateDeviceId\(\), entities/); assert.doesNotMatch(syncPage, /fetch\("\/api\/cloud\/sync\/status"\)/); });
+test("掃描開始時網路狀態為連線中", () => {
+  const request = beginCloudRequest(initialCloudConnectionState(), true);
+  assert.equal(request.state.status, "connecting");
+});
+test("掃描成功後網路狀態為已連線", () => {
+  const request = beginCloudRequest(initialCloudConnectionState(), true);
+  assert.equal(finishCloudRequest(request.state, request.requestId, true, true).status, "connected");
+});
+test("下載成功後網路狀態為已連線", () => {
+  const request = beginCloudRequest(initialCloudConnectionState(), true);
+  assert.equal(finishCloudRequest(request.state, request.requestId, true, true).status, "connected");
+});
+test("雲端請求失敗後網路狀態為連線異常", () => {
+  const request = beginCloudRequest(initialCloudConnectionState(), true);
+  assert.equal(finishCloudRequest(request.state, request.requestId, true, false).status, "error");
+});
+test("請求結束一定清除 pending loading", () => {
+  const request = beginCloudRequest(initialCloudConnectionState(), true);
+  assert.equal(finishCloudRequest(request.state, request.requestId, true, true).pendingRequests, 0);
+});
+test("離線不會被誤判為 API 連線異常", () => {
+  const request = beginCloudRequest(initialCloudConnectionState(), false);
+  assert.equal(request.state.status, "offline");
+  assert.equal(request.shouldRequest, false);
+});
+test("瀏覽器重新上線後回到未檢查而非假裝連線中", () => {
+  assert.equal(browserConnectionChanged({ status: "offline", latestRequestId: 1, pendingRequests: 0 }, true).status, "unchecked");
+});
+test("較舊的並行請求不會覆蓋較新的結果", () => {
+  const first = beginCloudRequest(initialCloudConnectionState(), true);
+  const second = beginCloudRequest(first.state, true);
+  const latest = finishCloudRequest(second.state, second.requestId, true, false);
+  assert.equal(finishCloudRequest(latest, first.requestId, true, true).status, "error");
+});
+test("網路狀態卡使用明確的使用者文字", () => {
+  assert.equal(cloudConnectionLabel("unchecked"), "未檢查");
+  assert.equal(cloudConnectionLabel("connected"), "已連線");
+  assert.equal(cloudConnectionLabel("error"), "連線異常");
+});
+test("同步頁在 finally 清除初始 loading，且卸載後不更新 state", () => {
+  assert.match(syncPage, /finally\(\(\) => \{\s*if \(mountedRef\.current\) setLoading\(false\);/);
+  assert.match(syncPage, /mountedRef\.current = false/);
+});
+test("雲端快照只接受符合 Schema 的資料", () => { const snapshot = parseCloudSnapshot({ reports: [{ reportId: "broken" }], cycles: [] }); assert.equal(snapshot.reports.length, 0); assert.equal(snapshot.invalidReports, 1); });
+test("Supabase timestamptz 會正規化為 Schema 接受的 UTC ISO 時間", () => assert.equal(normalizeCloudTimestamp("2026-07-18T18:00:00+00:00"), "2026-07-18T18:00:00.000Z"));
+test("無效雲端時間不會被猜測為有效資料", () => assert.equal(normalizeCloudTimestamp("not-a-time"), null));
+test("雲端還原計畫只建立本機缺少的資料", () => { const plan = planCloudRestore(cloudSnapshot(), [], []); assert.equal(plan.reports.length, 1); assert.equal(plan.cycles.length, 1); assert.equal(plan.existingReports.length, 0); });
+test("一份雲端報告與一輪 PDCA 顯示可下載兩筆", () => { const plan = planCloudRestore(cloudSnapshot(), [], []); assert.equal(plan.reports.length + plan.cycles.length, 2); });
+test("雲端同 ID 顯示已有對應本機資料而不重複還原", () => { const plan = planCloudRestore(cloudSnapshot(), ["cloud-report"], ["cloud-cycle"]); assert.equal(plan.reports.length, 0); assert.equal(plan.cycles.length, 0); assert.deepEqual(plan.existingReports, ["cloud-report"]); assert.deepEqual(plan.existingCycles, ["cloud-cycle"]); });
+test("同步頁只有明確下載操作才寫入本機", () => { assert.match(syncPage, /onClick=\{\(\) => void download\(\)\}/); assert.match(syncPage, /restoreReport\(cloudReport\.payload/); assert.match(syncPage, /restoreCycle\(cloudCycle\.payload/); });
+test("同步頁將已同步的同 ID 資料與真正衝突分開說明", () => assert.match(syncPage, /已有對應本機資料/));
+test("已有對應本機資料不會被當成真正衝突", () => {
+  assert.match(syncPage, /operation === "noop"/);
+  assert.match(syncPage, /真正衝突/);
+});
+test("下載流程只讀取雲端快照，不會呼叫雲端寫入", () => {
+  const downloadSource = syncPage.slice(syncPage.indexOf("const download"), syncPage.indexOf("const updateMigration"));
+  assert.match(downloadSource, /loadCloudSnapshot\(\)/);
+  assert.doesNotMatch(downloadSource, /syncPush\(/);
+});
+test("雲端 pull 排除 soft delete 並驗證回傳格式", () => { assert.match(syncPullRoute, /\.is\("deleted_at", null\)/); assert.match(syncPullRoute, /CloudReportSchema\.safeParse/); assert.match(syncPullRoute, /CloudPdcaCycleSchema\.safeParse/); });
+test("批次 push 僅回傳安全 error code 與 revision", () => { assert.match(syncPushRoute, /CloudErrorCodeSchema\.safeParse/); assert.doesNotMatch(syncPushRoute, /error\.message|error\.details|error\.hint/); });
+test("sync metadata 接受 local_only", () => assert.equal(SyncMetadataSchema.safeParse({ entityId: "r", localUpdatedAt: new Date().toISOString(), cloudRevision: null, lastSyncedHash: null, lastSyncedAt: null, syncState: "local_only", source: "local", pendingOperation: "none" }).success, true));
+for (const state of ["pending_upload", "pending_download", "syncing", "synced", "conflict", "offline", "error"] as const) test(`sync metadata 支援 ${state}`, () => assert.equal(SyncMetadataSchema.safeParse({ entityId: state, localUpdatedAt: new Date().toISOString(), cloudRevision: null, lastSyncedHash: null, lastSyncedAt: null, syncState: state, source: "local", pendingOperation: "none" }).success, true));
+for (const operation of ["create", "update", "delete", "none"] as const) test(`sync metadata 支援 ${operation}`, () => assert.equal(SyncMetadataSchema.safeParse({ entityId: operation, localUpdatedAt: new Date().toISOString(), cloudRevision: null, lastSyncedHash: null, lastSyncedAt: null, syncState: "local_only", source: "local", pendingOperation: operation }).success, true));
+for (const mode of ["auto", "local", "remote"] as const) test(`既有分析模式 ${mode} 可解析`, () => assert.equal(AnalyzeInputSchema.safeParse({ question: "測試", analysisMode: mode }).success, true));
+for (const invalid of ["", " ", "x".repeat(2001)]) test("無效決策問題拒絕", () => assert.equal(AnalyzeInputSchema.safeParse({ question: invalid }).success, false));
+for (const code of ["CLOUD_NOT_CONFIGURED", "AUTH_REQUIRED", "CLOUD_FORBIDDEN", "CLOUD_INVALID_INPUT", "CLOUD_NOT_FOUND", "CLOUD_CONFLICT", "CLOUD_RATE_LIMITED", "CLOUD_TEMPORARILY_UNAVAILABLE", "CLOUD_CANCELLED"] as const) test(`安全 API code ${code}`, () => assert.equal(CloudErrorCodeSchema.safeParse(code).success, true));
+for (const source of ["local", "cloud", "both"] as const) test(`sync metadata 來源 ${source}`, () => assert.equal(SyncMetadataSchema.safeParse({ entityId: source, localUpdatedAt: new Date().toISOString(), cloudRevision: null, lastSyncedHash: null, lastSyncedAt: null, syncState: "synced", source, pendingOperation: "none" }).success, true));
+for (const invalidState of ["uploaded", "waiting", "deleted", ""] as const) test(`未知 sync state ${invalidState || "empty"} 被拒絕`, () => assert.equal(SyncMetadataSchema.safeParse({ entityId: "x", localUpdatedAt: new Date().toISOString(), cloudRevision: null, lastSyncedHash: null, lastSyncedAt: null, syncState: invalidState, source: "local", pendingOperation: "none" }).success, false));
+for (const field of ["title", "background", "goal", "resources", "constraints", "risks"] as const) test(`${field} 超長輸入拒絕`, () => { const value = "x".repeat(field === "title" ? 81 : field === "goal" ? 1001 : field === "background" ? 4001 : 2001); assert.equal(AnalyzeInputSchema.safeParse({ question: "ok", [field]: value }).success, false); });
+test("metadata 要求 ISO 時間", () => assert.equal(SyncMetadataSchema.safeParse({ entityId: "x", localUpdatedAt: "today", cloudRevision: null, lastSyncedHash: null, lastSyncedAt: null, syncState: "synced", source: "local", pendingOperation: "none" }).success, false));
+test("metadata 拒絕非 sha256 hash", () => assert.equal(SyncMetadataSchema.safeParse({ entityId: "x", localUpdatedAt: new Date().toISOString(), cloudRevision: null, lastSyncedHash: "hash", lastSyncedAt: null, syncState: "synced", source: "local", pendingOperation: "none" }).success, false));
+test("metadata 不接受 revision zero", () => assert.equal(SyncMetadataSchema.safeParse({ entityId: "x", localUpdatedAt: new Date().toISOString(), cloudRevision: 0, lastSyncedHash: null, lastSyncedAt: null, syncState: "synced", source: "local", pendingOperation: "none" }).success, false));
+test("metadata 可紀錄 duplicatedFrom", () => assert.equal(SyncMetadataSchema.safeParse({ entityId: "copy", localUpdatedAt: new Date().toISOString(), cloudRevision: null, lastSyncedHash: null, lastSyncedAt: null, syncState: "pending_upload", source: "both", pendingOperation: "create", duplicatedFrom: "original" }).success, true));
+test("cloud mutation 可包含 deviceId", () => assert.equal(CloudMutationSchema.safeParse({ payload: {}, deviceId: "browser-1" }).success, true));
+test("cloud mutation 不接受過長 deviceId", () => assert.equal(CloudMutationSchema.safeParse({ payload: {}, deviceId: "x".repeat(201) }).success, false));
+test("admin authorization 需要 app metadata", () => assert.equal(adminAuthorization({ sub: "u", app_metadata: { role: "admin" } }).admin, true));
+test("admin authorization 拒絕 user metadata", () => assert.equal(adminAuthorization({ sub: "u", app_metadata: {}, user_metadata: { role: "admin" } } as never).admin, false));
+for (const [from, to, allowed] of [["draft","reviewed",true],["draft","published",false],["reviewed","published",true],["reviewed","draft",true],["published","archived",true],["published","draft",false],["archived","draft",true],["archived","published",false]] as const) test(`內容轉換 ${from}→${to}`, () => assert.equal(canTransition(from, to), allowed));
+test("draft 可編輯", () => assert.equal(canEdit("draft"), true));
+test("published 不可直接編輯", () => assert.equal(canEdit("published"), false));
+test("audit allowlist 過濾秘密欄位", () => assert.deepEqual(safeAuditMetadata({ changedFields: ["title"], token: "no", payload: "no", version: 2 }), { changedFields: ["title"], version: 2 }));
+test("audit 非物件輸出空物件", () => assert.deepEqual(safeAuditMetadata("unsafe"), {}));
+test("26 個項目分成 25 加 1", () => assert.deepEqual(batches(Array.from({ length: 26 }, (_, index) => index)).map((item) => item.length), [25, 1]));
+test("partial result 可計算 retry", () => assert.equal(summarizeResults([{ entityType: "report", entityId: "1", success: true, operation: "upload", cloudRevision: 1, errorCode: null }, { entityType: "report", entityId: "2", success: false, operation: "upload", cloudRevision: null, errorCode: "CLOUD_TEMPORARILY_UNAVAILABLE" }]).retry.length, 1));
+const base = { entityType: "report" as const, entityId: "a", localRevision: 1, cloudRevision: null, localHash: "a", cloudHash: null, state: "local_only" };
+test("sync plan 建立 upload", () => assert.equal(planSync([base], [])[0].operation, "upload_create"));
+test("sync plan 建立 download", () => assert.equal(planSync([], [{ ...base, cloudRevision: 1, cloudHash: "a" }])[0].operation, "download_create"));
+test("sync plan hash 相同 noop", () => assert.equal(planSync([{ ...base, localHash: "x" }], [{ ...base, cloudRevision: 1, cloudHash: "x" }])[0].operation, "noop"));
+test("sync plan 相同 revision 不同 hash conflict", () => assert.equal(planSync([{ ...base, localRevision: 1, localHash: "x" }], [{ ...base, cloudRevision: 1, cloudHash: "y" }])[0].operation, "conflict"));
+test("keep local 保留 expected revision 行為", () => assert.equal(resolveConflict({ reportId: "r" }, "local").action, "update_with_expected_revision"));
+test("keep cloud 建立 backup", () => assert.equal(resolveConflict({ reportId: "r" }, "cloud").action, "backup_then_replace"));
+test("keep both 產生新 ID", () => assert.notEqual((resolveConflict({ reportId: "r" }, "both") as { value: { reportId: string } }).value.reportId, "r"));
+test("decide later 保留 conflict", () => assert.equal(resolveConflict({ reportId: "r" }, "later").action, "keep_conflict"));
+test("migration 26 筆兩批", () => assert.equal(migrationProgress(Array.from({ length: 26 }, (_, index) => String(index))).totalBatches, 2));
+test("migration 顯式撤銷所有 cloud table 的基礎權限", () => assert.match(migration, /revoke all on table public\.profiles, public\.user_reports, public\.user_pdca_cycles, public\.knowledge_entries, public\.case_entries, public\.admin_audit_logs, public\.rate_limit_buckets from anon, authenticated, service_role/));
+test("anon 僅獲得公開內容 select", () => assert.match(migration, /grant select on table public\.knowledge_entries, public\.case_entries to anon/));
+test("anon 未獲得任何 write grant", () => assert.doesNotMatch(migration, /grant (?:insert|update|delete|all) on table [^;]+ to anon/));
+test("authenticated 可操作自己的 report 表", () => { assert.match(migration, /grant select, insert, update, delete on table public\.user_reports, public\.user_pdca_cycles to authenticated/); assert.match(migration, /"reports_own"[\s\S]*auth\.uid\(\)\) = user_id/); });
+test("authenticated report RLS 仍有 owner check", () => assert.match(migration, /"pdca_own"[\s\S]*auth\.uid\(\)\) = user_id/));
+test("普通 authenticated 沒有 audit 寫入 grant", () => assert.doesNotMatch(migration, /grant [^;]*(?:insert|update|delete)[^;]*admin_audit_logs[^;]*to authenticated/));
+test("admin content grant 仍由 app metadata RLS 限制", () => { assert.match(migration, /knowledge_admin_all[\s\S]*select public\.is_admin\(\)/); assert.match(migration, /auth\.jwt\(\) -> 'app_metadata'/); });
+test("user metadata 不出現在 migration 授權決策", () => assert.doesNotMatch(migration, /user_metadata/));
+test("rate limit bucket 無 browser grant", () => { assert.doesNotMatch(migration, /grant [^;]*rate_limit_buckets[^;]*to (?:anon|authenticated)/); assert.match(migration, /revoke all on table[\s\S]*rate_limit_buckets/); });
+test("rate limit RPC 只 grant service role", () => { assert.match(migration, /revoke all on function public\.consume_rate_limit[\s\S]*from public/); assert.match(migration, /grant execute on function public\.consume_rate_limit[\s\S]*to service_role/); });
+test("security definer functions 固定 search path", () => { assert.match(migration, /is_admin\(\)[\s\S]*set search_path = ''/); assert.match(migration, /consume_rate_limit[\s\S]*set search_path = pg_catalog, pg_temp/); });
+test("UUID 設計不需要 sequence grant", () => assert.match(migration, /no identity\/serial sequence grant is required/));
+test("同步 mutation migration 是純 additive，沒有修改既有 migration", () => {
+  assert.match(syncHardeningMigration, /create or replace function public\.sync_mutate_report/);
+  assert.match(syncHardeningMigration, /create or replace function public\.sync_mutate_pdca_cycle/);
+  assert.doesNotMatch(syncHardeningMigration, /drop table|truncate|alter table public\.(?:user_reports|user_pdca_cycles) disable row level security/i);
+});
+test("同步 mutation 以資料庫條件原子比對 revision", () => {
+  assert.match(syncHardeningMigration, /and r\.revision = expected_revision_input/);
+  assert.match(syncHardeningMigration, /and c\.revision = expected_revision_input/);
+  assert.doesNotMatch(cloudServer, /\.from\(tableFor\(entity\)\)\.upsert/);
+});
+test("同步 mutation 只以 auth uid 決定擁有者", () => {
+  assert.match(syncHardeningMigration, /actor_id uuid := auth\.uid\(\)/);
+  assert.doesNotMatch(syncHardeningMigration, /user_id_input/);
+});
+test("同步 mutation 不會復活 soft delete 資料", () => {
+  assert.match(syncHardeningMigration, /and r\.deleted_at is null/);
+  assert.match(syncHardeningMigration, /and c\.deleted_at is null/);
+  assert.match(syncHardeningMigration, /on conflict \(user_id, report_id\) do nothing/);
+});
+test("同步 mutation 的原生回傳欄位使用 table alias，避免名稱歧義", () => {
+  assert.match(syncHardeningMigration, /returning r\.revision, r\.updated_at, r\.deleted_at/);
+  assert.match(syncHardeningMigration, /returning c\.revision, c\.updated_at, c\.deleted_at/);
+});
+test("瀏覽器同步表不再具有 direct DML grant", () => {
+  assert.match(syncHardeningMigration, /revoke insert, update, delete on table public\.user_reports, public\.user_pdca_cycles from authenticated/);
+  assert.match(syncHardeningMigration, /grant execute on function public\.sync_mutate_report[\s\S]*to authenticated/);
+  assert.match(syncHardeningMigration, /grant execute on function public\.sync_mutate_pdca_cycle[\s\S]*to authenticated/);
+});
+test("REST Cloud route 將 mutation 導向受控 RPC", () => {
+  assert.match(cloudServer, /context\.client\.rpc\(rpc, args\)/);
+  assert.match(cloudServer, /payloadId !== id/);
+  assert.doesNotMatch(cloudServer, /error\.message|error\.details|error\.hint/);
+});
+test("同步 payload canonicalization 忽略物件 key 順序", async () => {
+  assert.equal(await stableHash(canonicalSyncPayload("report", { b: 2, a: 1 })), await stableHash(canonicalSyncPayload("report", { a: 1, b: 2 })));
+});
+test("同步 payload hash 透過唯一 canonicalizer 產生", async () => {
+  assert.equal(await syncPayloadHash("report", cloudReportPayload), await stableHash(canonicalSyncPayload("report", cloudReportPayload)));
+});
+test("未知同步 metadata 的同 ID 不會靜默覆寫", async () => {
+  const changed = { ...cloudReportPayload, report: { ...cloudReportPayload.report, problem_summary: "已變更" } };
+  const plan = await planCloudSync([{ entityType: "report", entityId: "cloud-report", payload: changed, updatedAt: "2026-07-19T00:00:00.000Z" }], cloudSnapshot(), []);
+  assert.equal(plan[0].operation, "conflict");
+});
+test("只有雲端自上次同步變更會規劃安全下載更新", async () => {
+  const originalHash = await syncPayloadHash("report", cloudReportPayload);
+  const cloudChanged = parseCloudSnapshot({ reports: [{ ...cloudSnapshot().reports[0], payload: { ...cloudReportPayload, report: { ...cloudReportPayload.report, problem_summary: "雲端較新" } } }], cycles: [] });
+  const plan = await planCloudSync([{ entityType: "report", entityId: "cloud-report", payload: cloudReportPayload, updatedAt: "2026-07-18T00:00:00.000Z" }], cloudChanged, [{ entityId: "report:cloud-report", localUpdatedAt: "2026-07-18T00:00:00.000Z", cloudRevision: 1, lastSyncedHash: originalHash, lastSyncedAt: "2026-07-18T00:00:00.000Z", syncState: "synced", source: "both", pendingOperation: "none" }]);
+  assert.equal(plan[0].operation, "download_update");
+});
+test("只有本機自上次同步變更會規劃 atomic upload 更新", async () => {
+  const originalHash = await syncPayloadHash("report", cloudReportPayload);
+  const localChanged = { ...cloudReportPayload, report: { ...cloudReportPayload.report, problem_summary: "本機較新" } };
+  const plan = await planCloudSync([{ entityType: "report", entityId: "cloud-report", payload: localChanged, updatedAt: "2026-07-19T00:00:00.000Z" }], cloudSnapshot(), [{ entityId: "report:cloud-report", localUpdatedAt: "2026-07-18T00:00:00.000Z", cloudRevision: 1, lastSyncedHash: originalHash, lastSyncedAt: "2026-07-18T00:00:00.000Z", syncState: "synced", source: "both", pendingOperation: "none" }]);
+  assert.equal(plan[0].operation, "upload_update");
+  assert.equal(plan[0].expectedRevision, 1);
+});
+test("雙方自上次同步變更會保留真正衝突", async () => {
+  const originalHash = await syncPayloadHash("report", cloudReportPayload);
+  const localChanged = { ...cloudReportPayload, report: { ...cloudReportPayload.report, problem_summary: "本機較新" } };
+  const cloudChanged = parseCloudSnapshot({ reports: [{ ...cloudSnapshot().reports[0], payload: { ...cloudReportPayload, report: { ...cloudReportPayload.report, problem_summary: "雲端較新" } } }], cycles: [] });
+  const plan = await planCloudSync([{ entityType: "report", entityId: "cloud-report", payload: localChanged, updatedAt: "2026-07-19T00:00:00.000Z" }], cloudChanged, [{ entityId: "report:cloud-report", localUpdatedAt: "2026-07-18T00:00:00.000Z", cloudRevision: 1, lastSyncedHash: originalHash, lastSyncedAt: "2026-07-18T00:00:00.000Z", syncState: "synced", source: "both", pendingOperation: "none" }]);
+  assert.equal(plan[0].operation, "conflict");
+});
+test("雲端缺失但有同步 metadata 時保留衝突而不重建", async () => {
+  const hash = await syncPayloadHash("report", cloudReportPayload);
+  const plan = await planCloudSync([{ entityType: "report", entityId: "cloud-report", payload: cloudReportPayload, updatedAt: "2026-07-19T00:00:00.000Z" }], parseCloudSnapshot({ reports: [], cycles: [] }), [{ entityId: "report:cloud-report", localUpdatedAt: "2026-07-18T00:00:00.000Z", cloudRevision: 1, lastSyncedHash: hash, lastSyncedAt: "2026-07-18T00:00:00.000Z", syncState: "synced", source: "both", pendingOperation: "none" }]);
+  assert.equal(plan[0].operation, "conflict");
+});
+test("sync push 每批成功都能立即回報進度", async () => {
+  const events: number[] = [];
+  const entities = Array.from({ length: 26 }, (_, index) => ({ entityType: "report" as const, entityId: `r-${index}`, payload: { id: index }, revision: null, updatedAt: null, deletedAt: null, deviceId: "d" }));
+  const results = await syncPush("d", entities, async (_url, init) => {
+    const body = JSON.parse(String(init?.body)) as { entities: Array<{ entityType: "report"; entityId: string }> };
+    return new Response(JSON.stringify({ results: body.entities.map((entity) => ({ ...entity, success: true, operation: "upload_create", cloudRevision: 1, errorCode: null })) }), { status: 200 });
+  }, { onBatch: (batch) => { events.push(batch.length); } });
+  assert.deepEqual(events, [25, 1]);
+  assert.equal(results.filter((item) => item.success).length, 26);
+});
+test("取消只在批次邊界生效，未送出項目保持可重試", async () => {
+  let calls = 0;
+  let cancel = false;
+  const entities = Array.from({ length: 26 }, (_, index) => ({ entityType: "report" as const, entityId: `c-${index}`, payload: { id: index }, revision: null, updatedAt: null, deletedAt: null, deviceId: "d" }));
+  const results = await syncPush("d", entities, async (_url, init) => {
+    calls += 1;
+    const body = JSON.parse(String(init?.body)) as { entities: Array<{ entityType: "report"; entityId: string }> };
+    return new Response(JSON.stringify({ results: body.entities.map((entity) => ({ ...entity, success: true, operation: "upload_create", cloudRevision: 1, errorCode: null })) }), { status: 200 });
+  }, { shouldCancel: () => cancel, onBatch: () => { cancel = true; } });
+  assert.equal(calls, 1);
+  assert.equal(results.filter((item) => item.errorCode === "CLOUD_CANCELLED").length, 1);
+  assert.equal(results.find((item) => item.errorCode === "CLOUD_CANCELLED")?.attempted, false);
+});
+test("26 筆資料取消後繼續只送出未完成的第 26 筆", async () => {
+  const sent: string[][] = [];
+  const entities = Array.from({ length: 26 }, (_, index) => ({ entityType: "report" as const, entityId: `resume-${index}`, payload: { id: index }, revision: null, updatedAt: null, deletedAt: null, deviceId: "d" }));
+  let cancel = false;
+  const first = await syncPush("d", entities, async (_url, init) => {
+    const body = JSON.parse(String(init?.body)) as { entities: Array<{ entityId: string }> };
+    sent.push(body.entities.map((item) => item.entityId));
+    return new Response(JSON.stringify({ results: body.entities.map((entity) => ({ entityType: "report", entityId: entity.entityId, success: true, operation: "upload_create", cloudRevision: 1, errorCode: null })) }), { status: 200 });
+  }, { shouldCancel: () => cancel, onBatch: () => { cancel = true; } });
+  const pending = first.filter((item) => !item.attempted).map((item) => ({ entityType: item.entityType, entityId: item.entityId, payload: { id: 25 }, revision: item.cloudRevision, updatedAt: item.updatedAt, deletedAt: null, deviceId: "d" }));
+  await syncPush("d", pending, async (_url, init) => {
+    const body = JSON.parse(String(init?.body)) as { entities: Array<{ entityId: string }> };
+    sent.push(body.entities.map((item) => item.entityId));
+    return new Response(JSON.stringify({ results: body.entities.map((entity) => ({ entityType: "report", entityId: entity.entityId, success: true, operation: "upload_create", cloudRevision: 1, errorCode: null })) }), { status: 200 });
+  });
+  assert.equal(first.filter((item) => item.success).length, 25);
+  assert.deepEqual(sent.map((batch) => batch.length), [25, 1]);
+  assert.deepEqual(sent[1], ["resume-25"]);
+});
+test("push 回應缺少任何結果時整批保留安全失敗", async () => {
+  const results = await syncPush("d", [{ entityType: "report", entityId: "missing", payload: {}, revision: null, updatedAt: null, deletedAt: null, deviceId: "d" }], async () => new Response(JSON.stringify({ results: [] }), { status: 200 }));
+  assert.equal(results[0].success, false);
+  assert.equal(results[0].errorCode, "CLOUD_TEMPORARILY_UNAVAILABLE");
+});
+test("Wizard 的空選取會保留，不會在重新掃描時靜默重選", () => assert.match(syncPage, /Array\.isArray\(saved\?\.selectedIds\)/));
+test("Wizard 的取消使用批次邊界而非中途截斷請求", () => {
+  assert.match(syncPage, /shouldCancel: \(\) => wizard && cancelRef\.current/);
+  assert.match(syncPage, /取消並保留進度/);
+  assert.match(syncPage, /繼續未完成項目/);
+  assert.doesNotMatch(syncPage, /migration\.cancelled\) return/);
+});
+test("E2E 僅能在 localhost 且明確測試旗標下略過 Sync 登入", () => {
+  assert.match(proxy, /WISDOM_E2E_BYPASS_AUTH === "true"/);
+  assert.match(proxy, /request\.nextUrl\.hostname === "localhost"/);
+  assert.match(proxy, /request\.headers\.get\("x-wisdom-e2e-sync"\) === "1"/);
+  assert.match(proxy, /pathname === "\/sync"/);
+});
+test("衝突 UI 提供本機、雲端、兩者與稍後決定的實際操作", () => {
+  assert.match(syncPage, /保留本機/);
+  assert.match(syncPage, /保留雲端/);
+  assert.match(syncPage, /兩者保留/);
+  assert.match(syncPage, /稍後決定/);
+  assert.match(syncPage, /safeBackup/);
+});
+test("Admin editor 是受控表單而非僅靜態說明", () => {
+  assert.match(contentEditor, /KnowledgeItemSchema\.safeParse/);
+  assert.match(contentEditor, /CaseSchema\.safeParse/);
+  assert.match(contentEditor, /transition/);
+  assert.match(contentEditor, /softDelete/);
+  assert.doesNotMatch(contentEditor, /error\.message|error\.details|error\.hint/);
+});

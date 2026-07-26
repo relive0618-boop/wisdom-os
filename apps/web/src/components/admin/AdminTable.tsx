@@ -1,0 +1,1 @@
+export function AdminTable({ children }: { children: React.ReactNode }) { return <div className="mt-5 overflow-x-auto rounded-xl border"><table className="w-full text-left text-sm">{children}</table></div>; }

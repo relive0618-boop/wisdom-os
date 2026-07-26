@@ -1,0 +1,1 @@
+"use client"; export function DeleteConfirmDialog({ onConfirm }: { onConfirm: () => void }) { return <button onClick={() => { if (window.confirm("確定要軟刪除這筆資料嗎？")) onConfirm(); }} className="rounded border px-2 py-1 text-xs">軟刪除</button>; }

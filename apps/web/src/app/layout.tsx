@@ -24,6 +24,7 @@ const NAV = [
   { href: "/knowledge", label: "册", text: "知识库" },
   { href: "/cases", label: "案", text: "案例" },
   { href: "/history", label: "时", text: "历史记录" },
+  { href: "/account", label: "人", text: "帳號同步" },
   { href: "/settings", label: "⚙", text: "设置" },
 ];
 
@@ -48,7 +49,7 @@ export default function RootLayout({
       <body className="flex min-h-full font-sans">
         {/* ==================== Mobile Bottom Nav ==================== */}
         <nav className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-[#ded8cc] bg-[#fffdf9] md:hidden">
-          {NAV.slice(0, 5).map(({ href, label, text }) => (
+          {[...NAV.slice(0, 5), NAV.find((item) => item.href === "/account")!].map(({ href, label, text }) => (
             <Link
               key={href}
               href={href}

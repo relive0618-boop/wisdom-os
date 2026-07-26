@@ -6,6 +6,7 @@ export default function SettingsPage() {
   const [theme, setTheme] = useState("light");
   const [stats, setStats] = useState({ cycles: 0, reviews: 0, itemsDone: 0 });
   const [remote, setRemote] = useState({ configured: false, apiKeyConfigured: false, provider: null as string | null, safeBaseUrl: null as string | null, model: null as string | null, timeoutMs: 25000, maxRetries: 1, maxOutputTokens: 1800, responseFormatMode: "prompt" as "prompt" | "json_object", totalBudgetMs: 45000, defaultMode: "auto" });
+  const [cloud, setCloud] = useState({ configured: false, syncEnabled: false, adminEnabled: false, persistentRateLimitEnabled: false });
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -30,7 +31,7 @@ export default function SettingsPage() {
     }, 0);
     fetch("/api/health")
       .then((res) => res.json())
-      .then((data: { remote?: Partial<typeof remote>; defaultMode?: string }) => setRemote((previous) => ({ ...previous, ...(data.remote || {}), defaultMode: data.defaultMode || previous.defaultMode })))
+      .then((data: { remote?: Partial<typeof remote>; cloud?: Partial<typeof cloud>; defaultMode?: string }) => { setRemote((previous) => ({ ...previous, ...(data.remote || {}), defaultMode: data.defaultMode || previous.defaultMode })); setCloud((previous) => ({ ...previous, ...(data.cloud || {}) })); })
       .catch(() => undefined);
     return () => window.clearTimeout(timer);
   }, []);
@@ -103,6 +104,12 @@ export default function SettingsPage() {
             <div>API Key：{remote.apiKeyConfigured ? "已設定" : "未設定"}</div>
             <div>默认分析模式：{remote.defaultMode}</div>
           </div>
+        </div>
+
+        <div className="rounded-xl border border-[#ded8cc] bg-[#fffdf9] p-6">
+          <span className="text-xs font-bold uppercase tracking-widest text-[#8a4d2e]">Cloud</span>
+          <h3 className="mt-1 text-base font-semibold">雲端帳號與同步</h3>
+          <div className="mt-4 space-y-2 text-xs text-[#77786f]"><div>Supabase：{cloud.configured ? "已配置" : "未配置（本地模式）"}</div><div>同步：{cloud.syncEnabled ? "已啟用" : "未啟用"}</div><div>管理：{cloud.adminEnabled ? "已啟用" : "未啟用"}</div><div>持久化限流：{cloud.persistentRateLimitEnabled ? "已啟用" : "記憶體模式"}</div></div>
         </div>
 
         {/* Privacy */}

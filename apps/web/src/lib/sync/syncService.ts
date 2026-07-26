@@ -1,0 +1,3 @@
+import { planSync, type SyncPlanItem } from "./syncPlanner";
+import { batches, summarizeResults, type BatchResult } from "./batchProcessor";
+export async function runSync(local: Array<Omit<SyncPlanItem, "operation" | "reason">>, cloud: Array<Omit<SyncPlanItem, "operation" | "reason">>, execute: (batch: SyncPlanItem[]) => Promise<BatchResult[]>) { const plan = planSync(local, cloud); const executable = plan.filter((item) => item.operation !== "noop" && item.operation !== "conflict"); const results: BatchResult[] = []; for (const batch of batches(executable)) results.push(...await execute(batch)); return { plan, results, summary: summarizeResults(results) }; }
