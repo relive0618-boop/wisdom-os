@@ -113,7 +113,10 @@ export async function mutateCloudEntity(
   if (status === "conflict") return NextResponse.json({ error: { code: "CLOUD_CONFLICT" }, cloudRevision }, { status: 409 });
   if (status === "not_found") return cloudError("CLOUD_NOT_FOUND", 404);
   if (status !== "created" && status !== "updated" && status !== "deleted") return cloudError("CLOUD_TEMPORARILY_UNAVAILABLE", 503);
-  return NextResponse.json({ data: { revision: cloudRevision } }, { status: status === "created" ? 201 : operation === "delete" ? 204 : 200 });
+  // RFC 9110 forbids a response body for 204. Constructing JSON here can turn
+  // a successful database deletion into a framework response error.
+  if (status === "deleted") return new NextResponse(null, { status: 204 });
+  return NextResponse.json({ data: { revision: cloudRevision } }, { status: status === "created" ? 201 : 200 });
 }
 
 export async function saveCloudEntity(request: Request, entity: Entity, id?: string) {

@@ -17,6 +17,7 @@ import {
   createMigrationState,
   getOrCreateDeviceId,
   loadMigrationState,
+  metadataAfterPushResult,
   metadataEntityId,
   parseCloudSnapshot,
   planCloudSync,
@@ -149,19 +150,16 @@ export default function SyncPage() {
   const persistBatch = useCallback(async (results: SyncPushResult[], total: number) => {
     const now = new Date().toISOString();
     for (const result of results) {
-      syncRepository.saveMetadata({
-        entityId: metadataEntityId(result.entityType, result.entityId),
-        localUpdatedAt: result.updatedAt ?? now,
-        cloudRevision: result.cloudRevision,
-        lastSyncedHash: result.success ? result.hash : null,
-        lastSyncedAt: result.success ? now : null,
-        syncState: result.success ? "synced" : result.errorCode === "CLOUD_CONFLICT" ? "conflict" : "error",
-        source: result.success ? "both" : "local",
-        pendingOperation: result.success ? "none" : result.operation === "upload_create" ? "create" : "update",
-      });
+      const entityId = metadataEntityId(result.entityType, result.entityId);
+      syncRepository.saveMetadata(metadataAfterPushResult(syncRepository.getMetadata(entityId), result, now));
     }
     const current = loadMigrationState();
-    if (current) saveMigration({ ...current, processed: Math.min(total, current.processed + results.filter((item) => item.success).length), errors: [...current.errors, ...results.filter((item) => !item.success).map((item) => item.errorCode ?? "CLOUD_TEMPORARILY_UNAVAILABLE")], updatedAt: now });
+    if (current) saveMigration({
+      ...current,
+      processed: Math.min(total, current.processed + results.filter((item) => item.success).length),
+      errors: [...current.errors, ...results.filter((item) => item.attempted && !item.success && item.errorCode !== "CLOUD_CANCELLED").map((item) => item.errorCode ?? "CLOUD_TEMPORARILY_UNAVAILABLE")],
+      updatedAt: now,
+    });
   }, [saveMigration]);
 
   const applyDownloads = useCallback(async (items: PlannedSyncItem[]) => {
@@ -234,12 +232,17 @@ export default function SyncPage() {
   }, [migration, saveMigration]);
 
   const runWizard = useCallback(async () => {
-    if (!migration || !cloud.configured || migration.cancelled) return;
+    if (!migration || !cloud.configured) return;
     const activePlan = await loadCloudSnapshot();
     const selected = new Set(migration.selectedIds);
     const candidates = activePlan.filter((item) => (item.operation === "upload_create" || item.operation === "upload_update") && selected.has(metadataEntityId(item.entityType, item.entityId)));
     cancelRef.current = false;
-    updateMigration({ step: "execute", processed: 0, total: candidates.length, errors: [], cancelled: false });
+    updateMigration({
+      step: "execute",
+      total: Math.max(migration.total, migration.processed + candidates.length),
+      errors: migration.errors.filter((error) => error !== "CLOUD_CANCELLED"),
+      cancelled: false,
+    });
     const result = await executeUpload(candidates, true);
     scanLocal();
     await loadCloudSnapshot();
@@ -308,7 +311,7 @@ export default function SyncPage() {
     <section className="mt-8 rounded-2xl border border-[#ded8cc] bg-[#fffdf9] p-5"><h2 className="font-semibold">Migration Wizard</h2><p className="mt-1 text-sm text-[#77786f]">掃描、預覽、選擇與執行均由你確認；取消會在目前批次結束後停止。</p>
       <div className="mt-4 flex flex-wrap gap-2 text-xs">{["scan", "preview", "choose", "execute"].map((step) => <span key={step} className={`rounded-full px-3 py-1 ${migration?.step === step ? "bg-[#20221f] text-white" : "bg-[#eee9df]"}`}>{step}</span>)}</div>
       <p className="mt-4 text-sm">{migration ? `已處理 ${migration.processed} / ${migration.total}；錯誤 ${migration.errors.length}。` : "按重新掃描建立遷移計畫。"}</p>
-      <div className="mt-4 flex flex-wrap gap-2"><button disabled={!migration} onClick={() => updateMigration({ step: "preview" })} className="rounded-lg border px-3 py-2 text-sm">預覽</button><button disabled={!migration} onClick={() => updateMigration({ step: "choose" })} className="rounded-lg border px-3 py-2 text-sm">選擇資料</button><button disabled={!migration || !cloud.configured || migration.selectedIds.length === 0} onClick={() => void runWizard()} className="rounded-lg border px-3 py-2 text-sm">開始分批執行</button><button disabled={!migration} onClick={() => { cancelRef.current = true; updateMigration({ cancelled: true }); }} className="rounded-lg border px-3 py-2 text-sm">取消並保留進度</button></div>
+      <div className="mt-4 flex flex-wrap gap-2"><button disabled={!migration} onClick={() => updateMigration({ step: "preview" })} className="rounded-lg border px-3 py-2 text-sm">預覽</button><button disabled={!migration} onClick={() => updateMigration({ step: "choose" })} className="rounded-lg border px-3 py-2 text-sm">選擇資料</button><button disabled={!migration || !cloud.configured || migration.selectedIds.length === 0} onClick={() => void runWizard()} className="rounded-lg border px-3 py-2 text-sm">{migration?.cancelled ? "繼續未完成項目" : "開始分批執行"}</button><button disabled={!migration || migration.cancelled} onClick={() => { cancelRef.current = true; updateMigration({ cancelled: true }); }} className="rounded-lg border px-3 py-2 text-sm">取消並保留進度</button></div>
       {migration?.step === "choose" && <div className="mt-4 space-y-2">{uploadable.map((item, index) => { const id = metadataEntityId(item.entityType, item.entityId); const selected = migration.selectedIds.includes(id); return <label key={id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={selected} onChange={() => updateMigration({ selectedIds: selected ? migration.selectedIds.filter((value) => value !== id) : [...migration.selectedIds, id] })} />{labelFor(item, index)}（{item.operation === "upload_create" ? "新增" : "更新"}）</label>; })}{uploadable.length === 0 && <p className="text-sm text-[#77786f]">目前沒有需要上傳的項目。</p>}</div>}
     </section>
 

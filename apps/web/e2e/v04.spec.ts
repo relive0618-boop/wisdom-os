@@ -75,6 +75,65 @@ test("Migration wizard 實際以選取範圍送出本機資料", async ({ page }
   await expect(page.getByRole("status")).toContainText("遷移完成：1 筆成功，0 筆待重試。");
   expect(sent.map(({ entityType, entityId }) => ({ entityType, entityId }))).toEqual([{ entityType: "report", entityId: "e2e-report" }]);
 });
+test("Migration wizard 取消後只繼續送出未完成批次", async ({ page }) => {
+  const reports = Array.from({ length: 26 }, (_, index) => {
+    const reportId = `e2e-resume-${index}`;
+    return {
+      ...report,
+      decisionId: `e2e-decision-${index}`,
+      reportId,
+      cycleId: `e2e-cycle-${index}`,
+      report: { ...report.report, decisionId: `e2e-decision-${index}`, reportId },
+      createdAt: "2026-07-26T00:00:00.000Z",
+    };
+  });
+  const sent: string[][] = [];
+  let beginFirstRequest!: () => void;
+  let releaseFirstRequest!: () => void;
+  const firstRequest = new Promise<void>((resolve) => { beginFirstRequest = resolve; });
+  const firstRelease = new Promise<void>((resolve) => { releaseFirstRequest = resolve; });
+  const cloudReports = new Map<string, Record<string, unknown>>();
+  let calls = 0;
+  await page.setExtraHTTPHeaders({ "x-wisdom-e2e-sync": "1" });
+  await page.addInitScript((storedReports) => localStorage.setItem("wisdom_reports_v1", JSON.stringify(storedReports)), reports);
+  await page.route("**/api/health", async (route) => route.fulfill({ json: { cloud: { configured: true, authEnabled: true, syncEnabled: true } } }));
+  await page.route("**/api/cloud/sync/pull", async (route) => route.fulfill({ json: { reports: [...cloudReports.values()], cycles: [], invalid: { reports: 0, cycles: 0 } } }));
+  await page.route("**/api/cloud/sync/push", async (route) => {
+    calls += 1;
+    const body = route.request().postDataJSON() as { entities: Array<{ entityId: string }> };
+    sent.push(body.entities.map((entity) => entity.entityId));
+    if (calls === 1) { beginFirstRequest(); await firstRelease; }
+    for (const entity of body.entities) {
+      const source = reports.find((item) => item.reportId === entity.entityId);
+      if (!source) continue;
+      cloudReports.set(entity.entityId, {
+        reportId: entity.entityId,
+        decisionId: source.decisionId,
+        title: null,
+        category: null,
+        payload: source,
+        revision: 1,
+        deviceId: null,
+        clientUpdatedAt: source.createdAt,
+        updatedAt: "2026-07-26T00:00:00.000Z",
+        deletedAt: null,
+      });
+    }
+    await route.fulfill({ json: { results: body.entities.map((entity) => ({ entityType: "report", entityId: entity.entityId, success: true, operation: "upload_create", cloudRevision: 1, errorCode: null })) } });
+  });
+
+  await page.goto("/sync");
+  await expect(page.getByText("本機報告").locator("..").getByText("26", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "開始分批執行" }).click();
+  await firstRequest;
+  await page.getByRole("button", { name: "取消並保留進度" }).click();
+  releaseFirstRequest();
+  await expect(page.getByRole("status")).toContainText("已在安全批次邊界取消");
+  await page.getByRole("button", { name: "繼續未完成項目" }).click();
+  await expect(page.getByRole("status")).toContainText("遷移完成：1 筆成功，0 筆待重試。");
+  expect(sent.map((batch) => batch.length)).toEqual([25, 1]);
+  expect(new Set(sent.flat()).size).toBe(26);
+});
 test("沒有重設憑證時新密碼表單維持停用", async ({ page }) => { await page.goto("/reset-password"); await expect(page.getByRole("button", { name: "更新密碼", exact: true })).toBeDisabled(); });
 test("未配置 cloud API 不執行同步", async ({ request }) => { const response = await request.post("/api/cloud/sync/pull"); expect(response.status()).toBe(503); });
 test("未登入 admin API 安全拒絕", async ({ request }) => { const response = await request.get("/api/admin/content/knowledge"); expect(response.status()).toBe(401); expect((await response.json()).error.code).toBe("AUTH_REQUIRED"); });

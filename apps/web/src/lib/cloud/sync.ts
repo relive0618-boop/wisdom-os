@@ -19,6 +19,9 @@ const DEVICE_KEY = "wisdom_cloud_device_id_v1";
 export type SyncPushResult = {
   entityType: SyncEntity["entityType"];
   entityId: string;
+  // A cancelled entity was never sent. Keeping it explicit prevents the UI
+  // from treating a safe batch-boundary cancellation as a remote failure.
+  attempted: boolean;
   success: boolean;
   operation: "upload_create" | "upload_update";
   cloudRevision: number | null;
@@ -26,6 +29,33 @@ export type SyncPushResult = {
   hash: string;
   updatedAt: string | null;
 };
+
+/**
+ * Merge an upload result without discarding the last trusted sync baseline.
+ * A transient request failure says nothing about the remote revision or the
+ * last successfully synchronised payload; only a successful RPC may replace
+ * those facts.
+ */
+export function metadataAfterPushResult(existing: SyncMetadata | null, result: SyncPushResult, now: string): SyncMetadata {
+  const entityId = metadataEntityId(result.entityType, result.entityId);
+  const pendingOperation = result.operation === "upload_create" ? "create" : "update";
+  if (!result.attempted) {
+    if (existing) return { ...existing, syncState: "pending_upload", pendingOperation };
+    return { entityId, localUpdatedAt: result.updatedAt ?? now, cloudRevision: null, lastSyncedHash: null, lastSyncedAt: null, syncState: "pending_upload", source: "local", pendingOperation };
+  }
+  return {
+    entityId,
+    localUpdatedAt: result.updatedAt ?? existing?.localUpdatedAt ?? now,
+    cloudRevision: result.success ? result.cloudRevision : result.errorCode === "CLOUD_CONFLICT" ? result.cloudRevision ?? existing?.cloudRevision ?? null : existing?.cloudRevision ?? null,
+    lastSyncedHash: result.success ? result.hash : existing?.lastSyncedHash ?? null,
+    lastSyncedAt: result.success ? now : existing?.lastSyncedAt ?? null,
+    syncState: result.success ? "synced" : result.errorCode === "CLOUD_CONFLICT" ? "conflict" : "error",
+    source: result.success ? "both" : existing?.source ?? "local",
+    pendingOperation: result.success ? "none" : pendingOperation,
+    duplicatedFrom: existing?.duplicatedFrom ?? null,
+    localBackupAt: existing?.localBackupAt ?? null,
+  };
+}
 
 export type PlannedSyncOperation = "upload_create" | "upload_update" | "download_create" | "download_update" | "conflict" | "noop";
 export type PlannedSyncItem = {
@@ -224,8 +254,8 @@ export type SyncPushOptions = {
   shouldCancel?: () => boolean;
 };
 
-function syntheticBatchFailure(entities: SyncEntity[], errorCode: string): SyncPushResult[] {
-  return entities.map((entity) => ({ entityType: entity.entityType, entityId: entity.entityId, success: false, operation: entity.revision ? "upload_update" : "upload_create", cloudRevision: entity.revision ?? null, errorCode, hash: entity.hash, updatedAt: entity.updatedAt ?? null }));
+function syntheticBatchFailure(entities: SyncEntity[], errorCode: string, attempted = true): SyncPushResult[] {
+  return entities.map((entity) => ({ entityType: entity.entityType, entityId: entity.entityId, attempted, success: false, operation: entity.revision ? "upload_update" : "upload_create", cloudRevision: entity.revision ?? null, errorCode, hash: entity.hash, updatedAt: entity.updatedAt ?? null }));
 }
 
 function exactBatchResults(entities: SyncEntity[], value: unknown): SyncPushResult[] | null {
@@ -239,7 +269,7 @@ function exactBatchResults(entities: SyncEntity[], value: unknown): SyncPushResu
     seen.add(key);
     const source = entities.find((entity) => `${entity.entityType}:${entity.entityId}` === key);
     if (!source) return null;
-    results.push({ ...item, hash: source.hash, updatedAt: source.updatedAt ?? null });
+    results.push({ ...item, attempted: true, hash: source.hash, updatedAt: source.updatedAt ?? null });
   }
   return seen.size === expected.size ? results : null;
 }
@@ -256,7 +286,7 @@ export async function syncPush(deviceId: string, entities: Omit<SyncEntity, "has
   for (let index = 0; index < batches.length; index += 1) {
     const entitiesBatch = batches[index];
     if (options.shouldCancel?.()) {
-      const cancelled = batches.slice(index).flatMap((batch) => syntheticBatchFailure(batch, "CLOUD_CANCELLED"));
+      const cancelled = batches.slice(index).flatMap((batch) => syntheticBatchFailure(batch, "CLOUD_CANCELLED", false));
       results.push(...cancelled);
       await options.onBatch?.(cancelled);
       break;
