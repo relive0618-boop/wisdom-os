@@ -108,6 +108,10 @@ export function restoreCycle(cycle: PdcaCycle): { ok: true } | { ok: false; code
   return result.ok ? result : { ok: false, code: result.code };
 }
 
+export function replaceCycle(cycle: PdcaCycle): { ok: true } | { ok: false; code: "PDCA_STORAGE_SAVE_FAILED" } {
+  return saveCycle(cycle);
+}
+
 export function listCycles(): PdcaCycle[] {
   if (typeof window === "undefined") return [];
   const cycles: PdcaCycle[] = [];

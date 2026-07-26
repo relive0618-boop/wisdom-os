@@ -27,6 +27,19 @@ export type SyncPushResult = {
   updatedAt: string | null;
 };
 
+export type PlannedSyncOperation = "upload_create" | "upload_update" | "download_create" | "download_update" | "conflict" | "noop";
+export type PlannedSyncItem = {
+  entityType: SyncEntity["entityType"];
+  entityId: string;
+  operation: PlannedSyncOperation;
+  local: { payload: unknown; updatedAt: string } | null;
+  cloud: CloudReport | CloudPdcaCycle | null;
+  localHash: string | null;
+  cloudHash: string | null;
+  expectedRevision: number | null;
+  reason: string;
+};
+
 export type CloudSnapshot = {
   reports: CloudReport[];
   cycles: CloudPdcaCycle[];
@@ -79,6 +92,76 @@ export function planCloudRestore(snapshot: CloudSnapshot, localReportIds: Iterab
   };
 }
 
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => [key, canonicalize(child)]));
+  }
+  return value;
+}
+
+export function canonicalSyncPayload(entityType: SyncEntity["entityType"], value: unknown): unknown {
+  const parsed = entityType === "report" ? CloudReportSchema.shape.payload.safeParse(value) : CloudPdcaCycleSchema.shape.payload.safeParse(value);
+  return canonicalize(parsed.success ? parsed.data : value);
+}
+
+export async function syncPayloadHash(entityType: SyncEntity["entityType"], value: unknown) {
+  return stableHash(canonicalSyncPayload(entityType, value));
+}
+
+export async function planCloudSync(
+  local: Array<{ entityType: SyncEntity["entityType"]; entityId: string; payload: unknown; updatedAt: string }>,
+  snapshot: CloudSnapshot,
+  metadata: SyncMetadata[],
+): Promise<PlannedSyncItem[]> {
+  const cloud = [
+    ...snapshot.reports.map((item) => ({ entityType: "report" as const, entityId: item.reportId, value: item })),
+    ...snapshot.cycles.map((item) => ({ entityType: "pdca" as const, entityId: item.cycleId, value: item })),
+  ];
+  const ids = new Set([...local, ...cloud].map((item) => metadataEntityId(item.entityType, item.entityId)));
+  const metadataByEntity = new Map(metadata.map((item) => [item.entityId, item]));
+  const plans: PlannedSyncItem[] = [];
+  for (const id of ids) {
+    const localItem = local.find((item) => metadataEntityId(item.entityType, item.entityId) === id) ?? null;
+    const cloudItem = cloud.find((item) => metadataEntityId(item.entityType, item.entityId) === id) ?? null;
+    const base = localItem ?? cloudItem!;
+    const entityType = base.entityType;
+    const entityId = base.entityId;
+    const saved = metadataByEntity.get(id) ?? null;
+    const localHash = localItem ? await syncPayloadHash(entityType, localItem.payload) : null;
+    const cloudHash = cloudItem ? await syncPayloadHash(entityType, cloudItem.value.payload) : null;
+    const plannedBase = { entityType, entityId, local: localItem, cloud: cloudItem?.value ?? null, localHash, cloudHash, expectedRevision: cloudItem?.value.revision ?? saved?.cloudRevision ?? null };
+
+    if (!cloudItem && localItem) {
+      plans.push({ ...plannedBase, operation: saved?.cloudRevision || saved?.lastSyncedHash ? "conflict" : "upload_create", reason: saved?.cloudRevision || saved?.lastSyncedHash ? "cloud_missing_with_metadata" : "missing_cloud" });
+      continue;
+    }
+    if (cloudItem && !localItem) {
+      plans.push({ ...plannedBase, operation: "download_create", reason: "missing_local" });
+      continue;
+    }
+    if (!localItem || !cloudItem) continue;
+    if (localHash === cloudHash) {
+      plans.push({ ...plannedBase, operation: "noop", reason: "hash_match" });
+      continue;
+    }
+    if (!saved?.lastSyncedHash) {
+      plans.push({ ...plannedBase, operation: "conflict", reason: "same_id_without_trusted_metadata" });
+      continue;
+    }
+    if (localHash === saved.lastSyncedHash && cloudHash !== saved.lastSyncedHash) {
+      plans.push({ ...plannedBase, operation: "download_update", reason: "cloud_changed_since_sync" });
+      continue;
+    }
+    if (cloudHash === saved.lastSyncedHash && localHash !== saved.lastSyncedHash) {
+      plans.push({ ...plannedBase, operation: "upload_update", reason: "local_changed_since_sync" });
+      continue;
+    }
+    plans.push({ ...plannedBase, operation: "conflict", reason: "both_changed_since_sync" });
+  }
+  return plans;
+}
+
 export interface SyncRepository {
   listMetadata(): SyncMetadata[];
   getMetadata(entityId: string): SyncMetadata | null;
@@ -113,7 +196,7 @@ export function conflictResolutionMetadata(metadata: SyncMetadata, strategy: "lo
 }
 
 export async function stableHash(value: unknown) {
-  const data = new TextEncoder().encode(JSON.stringify(value));
+  const data = new TextEncoder().encode(JSON.stringify(canonicalize(value)));
   const digest = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -136,22 +219,58 @@ function isPushResponse(value: unknown): value is { results: Array<{ entityType:
   return value.results.every((item) => item && typeof item === "object" && (item.entityType === "report" || item.entityType === "pdca") && typeof item.entityId === "string" && typeof item.success === "boolean" && (item.operation === "upload_create" || item.operation === "upload_update") && (item.cloudRevision === null || (typeof item.cloudRevision === "number" && Number.isInteger(item.cloudRevision) && item.cloudRevision > 0)) && (item.errorCode === null || typeof item.errorCode === "string"));
 }
 
-export async function syncPush(deviceId: string, entities: Omit<SyncEntity, "hash">[], transport: typeof fetch = fetch): Promise<SyncPushResult[]> {
+export type SyncPushOptions = {
+  onBatch?: (results: SyncPushResult[]) => void | Promise<void>;
+  shouldCancel?: () => boolean;
+};
+
+function syntheticBatchFailure(entities: SyncEntity[], errorCode: string): SyncPushResult[] {
+  return entities.map((entity) => ({ entityType: entity.entityType, entityId: entity.entityId, success: false, operation: entity.revision ? "upload_update" : "upload_create", cloudRevision: entity.revision ?? null, errorCode, hash: entity.hash, updatedAt: entity.updatedAt ?? null }));
+}
+
+function exactBatchResults(entities: SyncEntity[], value: unknown): SyncPushResult[] | null {
+  if (!isPushResponse(value) || value.results.length !== entities.length) return null;
+  const expected = new Set(entities.map((item) => `${item.entityType}:${item.entityId}`));
+  const seen = new Set<string>();
+  const results: SyncPushResult[] = [];
+  for (const item of value.results) {
+    const key = `${item.entityType}:${item.entityId}`;
+    if (!expected.has(key) || seen.has(key)) return null;
+    seen.add(key);
+    const source = entities.find((entity) => `${entity.entityType}:${entity.entityId}` === key);
+    if (!source) return null;
+    results.push({ ...item, hash: source.hash, updatedAt: source.updatedAt ?? null });
+  }
+  return seen.size === expected.size ? results : null;
+}
+
+export async function syncPush(deviceId: string, entities: Omit<SyncEntity, "hash">[], transport: typeof fetch = fetch, options: SyncPushOptions = {}): Promise<SyncPushResult[]> {
   const batches: SyncEntity[][] = [];
   for (let index = 0; index < entities.length; index += SYNC_BATCH_SIZE) {
-    const batch = await Promise.all(entities.slice(index, index + SYNC_BATCH_SIZE).map(async (entity) => ({ ...entity, hash: await stableHash(entity.payload) })));
+    // Hash exactly the same canonical payload used by the planner. Otherwise a
+    // harmless key-order difference can make the next scan look like a conflict.
+    const batch = await Promise.all(entities.slice(index, index + SYNC_BATCH_SIZE).map(async (entity) => ({ ...entity, hash: await syncPayloadHash(entity.entityType, entity.payload) })));
     batches.push(batch);
   }
   const results: SyncPushResult[] = [];
-  for (const entitiesBatch of batches) {
-    const response = await transport("/api/cloud/sync/push", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deviceId, entities: entitiesBatch }) });
-    const body: unknown = await response.json().catch(() => null);
-    if (!response.ok || !isPushResponse(body)) throw new Error("CLOUD_SYNC_REQUEST_FAILED");
-    for (const item of body.results) {
-      const source = entitiesBatch.find((entity) => entity.entityType === item.entityType && entity.entityId === item.entityId);
-      if (!source) throw new Error("CLOUD_SYNC_RESPONSE_INVALID");
-      results.push({ ...item, hash: source.hash, updatedAt: source.updatedAt ?? null });
+  for (let index = 0; index < batches.length; index += 1) {
+    const entitiesBatch = batches[index];
+    if (options.shouldCancel?.()) {
+      const cancelled = batches.slice(index).flatMap((batch) => syntheticBatchFailure(batch, "CLOUD_CANCELLED"));
+      results.push(...cancelled);
+      await options.onBatch?.(cancelled);
+      break;
     }
+    let batchResults: SyncPushResult[];
+    try {
+      const response = await transport("/api/cloud/sync/push", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ deviceId, entities: entitiesBatch }) });
+      const body: unknown = await response.json().catch(() => null);
+      batchResults = response.ok ? exactBatchResults(entitiesBatch, body) ?? syntheticBatchFailure(entitiesBatch, "CLOUD_TEMPORARILY_UNAVAILABLE") : syntheticBatchFailure(entitiesBatch, "CLOUD_TEMPORARILY_UNAVAILABLE");
+    } catch {
+      batchResults = syntheticBatchFailure(entitiesBatch, "CLOUD_TEMPORARILY_UNAVAILABLE");
+    }
+    results.push(...batchResults);
+    await options.onBatch?.(batchResults);
   }
   return results;
 }

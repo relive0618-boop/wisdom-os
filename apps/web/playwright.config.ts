@@ -8,5 +8,11 @@ export default defineConfig({
   retries: 0,
   reporter: [["list"]],
   use: { baseURL: "http://localhost:3000", trace: "off", ...devices["Desktop Chrome"] },
-  webServer: { command: "pnpm start --hostname localhost", url: "http://localhost:3000", reuseExistingServer: false, timeout: 120_000 },
+  webServer: {
+    command: "pnpm start --hostname localhost",
+    url: "http://localhost:3000",
+    reuseExistingServer: false,
+    timeout: 120_000,
+    env: { WISDOM_E2E_BYPASS_AUTH: "true" },
+  },
 });

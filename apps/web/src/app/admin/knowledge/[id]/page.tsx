@@ -1,1 +1,3 @@
-import { AdminLayout } from "@/components/admin/AdminLayout"; export default async function Page({ params }: { params: Promise<{ id: string }> }) { return <AdminLayout title={`編輯知識：${(await params).id}`}><p className="mt-5 text-sm">編輯介面受管理 API 驗證，published 項目需要先封存或建立新 draft。</p></AdminLayout>; }
+import { ContentEditor } from "@/components/admin/ContentEditor";
+import { AdminLayout } from "@/components/admin/AdminLayout";
+export default async function Page({ params }: { params: Promise<{ id: string }> }) { const { id } = await params; return <AdminLayout title="編輯知識"><ContentEditor kind="knowledge" contentId={id} /></AdminLayout>; }

@@ -24,8 +24,45 @@ export async function readJson(request: Request) {
 }
 
 type Entity = "reports" | "pdca";
+export type CloudMutationOperation = "create" | "update" | "delete";
 const tableFor = (entity: Entity) => entity === "reports" ? "user_reports" : "user_pdca_cycles";
 const keyFor = (entity: Entity) => entity === "reports" ? "report_id" : "cycle_id";
+
+type MutationInput = {
+  payload?: unknown;
+  expectedRevision: number | null;
+  deviceId: string | null;
+  clientUpdatedAt: string | null;
+};
+
+type RpcResult = { result?: unknown; cloud_revision?: unknown; updated_at?: unknown; deleted_at?: unknown };
+
+function validRevision(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function parseMutation(value: unknown, operation: CloudMutationOperation): MutationInput | null {
+  if (operation === "delete") {
+    if (!value || typeof value !== "object") return null;
+    const raw = value as { expectedRevision?: unknown; deviceId?: unknown; clientUpdatedAt?: unknown };
+    if (!validRevision(raw.expectedRevision)) return null;
+    return {
+      expectedRevision: raw.expectedRevision,
+      deviceId: typeof raw.deviceId === "string" && raw.deviceId.length <= 200 ? raw.deviceId : null,
+      clientUpdatedAt: typeof raw.clientUpdatedAt === "string" ? raw.clientUpdatedAt : null,
+    };
+  }
+  const parsed = CloudMutationSchema.safeParse(value);
+  if (!parsed.success) return null;
+  if (operation === "create" && parsed.data.expectedRevision !== null && parsed.data.expectedRevision !== undefined) return null;
+  if (operation === "update" && !validRevision(parsed.data.expectedRevision)) return null;
+  return {
+    payload: parsed.data.payload,
+    expectedRevision: parsed.data.expectedRevision ?? null,
+    deviceId: parsed.data.deviceId ?? null,
+    clientUpdatedAt: parsed.data.clientUpdatedAt ?? null,
+  };
+}
 
 export async function listCloudEntity(entity: Entity) {
   const context = await cloudContext(); if ("error" in context) return context.error;
@@ -34,40 +71,68 @@ export async function listCloudEntity(entity: Entity) {
   return NextResponse.json({ data: data ?? [] });
 }
 
-export async function saveCloudEntity(request: Request, entity: Entity, id?: string) {
+export async function mutateCloudEntity(
+  entity: Entity,
+  id: string,
+  operation: CloudMutationOperation,
+  input: MutationInput,
+) {
   const context = await cloudContext(); if ("error" in context) return context.error;
-  const body = await readJson(request); if ("error" in body) return body.error;
-  const parsed = CloudMutationSchema.safeParse(body.value); if (!parsed.success) return cloudError("CLOUD_INVALID_INPUT", 422);
-  const payload = entity === "reports" ? AnalyzeResponseSchema.safeParse(parsed.data.payload) : PdcaCycleSchema.safeParse(parsed.data.payload);
-  if (!payload.success) return cloudError("CLOUD_INVALID_INPUT", 422);
-  const entityId = id ?? (entity === "reports" ? payload.data.reportId : payload.data.cycleId);
-  const key = keyFor(entity);
-  const table = tableFor(entity);
-  const { data: existing, error: lookupError } = await context.client.from(table).select("revision").eq(key, entityId).maybeSingle();
-  if (lookupError) return cloudError("CLOUD_TEMPORARILY_UNAVAILABLE", 503);
-  if (parsed.data.expectedRevision && existing?.revision !== parsed.data.expectedRevision) {
-    return NextResponse.json({ error: { code: "CLOUD_CONFLICT" }, cloudRevision: existing?.revision ?? null }, { status: 409 });
+  let payload: ReturnType<typeof AnalyzeResponseSchema.parse> | ReturnType<typeof PdcaCycleSchema.parse> | null = null;
+  if (operation !== "delete") {
+    const parsed = entity === "reports" ? AnalyzeResponseSchema.safeParse(input.payload) : PdcaCycleSchema.safeParse(input.payload);
+    if (!parsed.success) return cloudError("CLOUD_INVALID_INPUT", 422);
+    payload = parsed.data;
+    const payloadId = entity === "reports" ? payload.reportId : payload.cycleId;
+    if (payloadId !== id) return cloudError("CLOUD_INVALID_INPUT", 422);
   }
-  let data: unknown, error: unknown;
-  if (entity === "reports") {
-    const report = payload.data as ReturnType<typeof AnalyzeResponseSchema.parse>;
-    ({ data, error } = await context.client.from("user_reports").upsert({ user_id: context.userId, report_id: entityId, decision_id: report.decisionId, title: report.report.problem_summary.slice(0, 80), category: report.report.category, payload: report, analysis_meta: { provider: report.provider, analysisMode: report.analysisMode }, device_id: parsed.data.deviceId ?? null, client_updated_at: parsed.data.clientUpdatedAt ?? null, deleted_at: null }, { onConflict: "user_id,report_id" }).select("*").single());
-  } else {
-    const cycle = payload.data as ReturnType<typeof PdcaCycleSchema.parse>;
-    ({ data, error } = await context.client.from("user_pdca_cycles").upsert({ user_id: context.userId, cycle_id: entityId, report_id: cycle.reportId, payload: cycle, device_id: parsed.data.deviceId ?? null, client_updated_at: parsed.data.clientUpdatedAt ?? null, deleted_at: null }, { onConflict: "user_id,cycle_id" }).select("*").single());
-  }
+
+  const rpc = entity === "reports" ? "sync_mutate_report" : "sync_mutate_pdca_cycle";
+  const args = entity === "reports"
+    ? {
+        operation_input: operation,
+        report_id_input: id,
+        expected_revision_input: input.expectedRevision,
+        payload_input: payload,
+        device_id_input: input.deviceId,
+        client_updated_at_input: input.clientUpdatedAt,
+      }
+    : {
+        operation_input: operation,
+        cycle_id_input: id,
+        expected_revision_input: input.expectedRevision,
+        payload_input: payload,
+        device_id_input: input.deviceId,
+        client_updated_at_input: input.clientUpdatedAt,
+      };
+  const { data, error } = await context.client.rpc(rpc, args);
   if (error) return cloudError("CLOUD_TEMPORARILY_UNAVAILABLE", 503);
-  return NextResponse.json({ data }, { status: existing ? 200 : 201 });
+  const result = Array.isArray(data) ? data[0] as RpcResult | undefined : undefined;
+  const status = result?.result;
+  const cloudRevision = validRevision(result?.cloud_revision) ? result.cloud_revision : null;
+  if (status === "conflict") return NextResponse.json({ error: { code: "CLOUD_CONFLICT" }, cloudRevision }, { status: 409 });
+  if (status === "not_found") return cloudError("CLOUD_NOT_FOUND", 404);
+  if (status !== "created" && status !== "updated" && status !== "deleted") return cloudError("CLOUD_TEMPORARILY_UNAVAILABLE", 503);
+  return NextResponse.json({ data: { revision: cloudRevision } }, { status: status === "created" ? 201 : operation === "delete" ? 204 : 200 });
 }
 
-export async function deleteCloudEntity(entity: Entity, id: string, expectedRevision: number | null) {
-  const context = await cloudContext(); if ("error" in context) return context.error;
-  const table = tableFor(entity), key = keyFor(entity);
-  const { data: existing, error: lookupError } = await context.client.from(table).select("revision").eq(key, id).maybeSingle();
-  if (lookupError) return cloudError("CLOUD_TEMPORARILY_UNAVAILABLE", 503);
-  if (!existing) return cloudError("CLOUD_NOT_FOUND", 404);
-  if (expectedRevision && existing.revision !== expectedRevision) return cloudError("CLOUD_CONFLICT", 409);
-  const { error } = await context.client.from(table).update({ deleted_at: new Date().toISOString() }).eq(key, id);
-  if (error) return cloudError("CLOUD_TEMPORARILY_UNAVAILABLE", 503);
-  return new NextResponse(null, { status: 204 });
+export async function saveCloudEntity(request: Request, entity: Entity, id?: string) {
+  const body = await readJson(request); if ("error" in body) return body.error;
+  const operation: CloudMutationOperation = id ? "update" : "create";
+  const input = parseMutation(body.value, operation);
+  if (!input || input.payload === undefined) return cloudError("CLOUD_INVALID_INPUT", 422);
+  const parsed = entity === "reports" ? AnalyzeResponseSchema.safeParse(input.payload) : PdcaCycleSchema.safeParse(input.payload);
+  if (!parsed.success) return cloudError("CLOUD_INVALID_INPUT", 422);
+  const payloadId = entity === "reports" ? parsed.data.reportId : parsed.data.cycleId;
+  if (id && payloadId !== id) return cloudError("CLOUD_INVALID_INPUT", 422);
+  return mutateCloudEntity(entity, id ?? payloadId, operation, input);
 }
+
+export async function deleteCloudEntity(entity: Entity, id: string, value: unknown) {
+  const input = parseMutation(value, "delete");
+  if (!input) return cloudError("CLOUD_INVALID_INPUT", 422);
+  return mutateCloudEntity(entity, id, "delete", input);
+}
+
+export function entityTableName(entity: Entity) { return tableFor(entity); }
+export function entityKeyName(entity: Entity) { return keyFor(entity); }

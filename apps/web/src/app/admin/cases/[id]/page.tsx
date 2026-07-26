@@ -1,1 +1,3 @@
-import { AdminLayout } from "@/components/admin/AdminLayout"; export default async function Page({ params }: { params: Promise<{ id: string }> }) { return <AdminLayout title={`編輯案例：${(await params).id}`}><p className="mt-5 text-sm">資料送出會由管理 API 檢查案例 schema 與發布規則。</p></AdminLayout>; }
+import { ContentEditor } from "@/components/admin/ContentEditor";
+import { AdminLayout } from "@/components/admin/AdminLayout";
+export default async function Page({ params }: { params: Promise<{ id: string }> }) { const { id } = await params; return <AdminLayout title="編輯案例"><ContentEditor kind="cases" contentId={id} /></AdminLayout>; }

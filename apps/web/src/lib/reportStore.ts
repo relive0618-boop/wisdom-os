@@ -77,6 +77,20 @@ export function restoreReport(
   }
 }
 
+export function replaceReport(
+  response: AnalyzeResponse,
+  createdAt: string,
+): { ok: true; record: StoredReport } | { ok: false; code: "REPORT_STORAGE_SAVE_FAILED" } {
+  const record = StoredReportSchema.safeParse({ ...response, createdAt });
+  if (!record.success) return { ok: false, code: "REPORT_STORAGE_SAVE_FAILED" };
+  try {
+    writeAll([record.data, ...readAll().filter((item) => item.reportId !== record.data.reportId)]);
+    return { ok: true, record: record.data };
+  } catch {
+    return { ok: false, code: "REPORT_STORAGE_SAVE_FAILED" };
+  }
+}
+
 export function loadReport(reportId: string): StoredReport | null {
   return readAll().find((item) => item.reportId === reportId) || null;
 }
